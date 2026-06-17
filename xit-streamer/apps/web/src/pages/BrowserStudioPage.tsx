@@ -118,6 +118,16 @@ export function BrowserStudioPage() {
   const startMutation = useMutation({
     mutationFn: async () => {
       setConnecting(true);
+
+      // Validate that this stream was created as webrtc type
+      if (stream?.ingestType !== 'webrtc') {
+        throw new Error(
+          `This stream uses RTMP ingest ("${stream?.ingestType}"). ` +
+          'Browser Studio requires a stream created with ingest type "webrtc". ' +
+          'Go back and create a new stream selecting "Browser Studio" as the source.'
+        );
+      }
+
       const pc = new RTCPeerConnection({
         iceServers: [{ urls: STUN_URLS.split(',') }],
       });
@@ -128,25 +138,40 @@ export function BrowserStudioPage() {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
+      // Wait for ICE gathering to complete for a more complete SDP
+      await new Promise<void>((resolve) => {
+        if (pc.iceGatheringState === 'complete') { resolve(); return; }
+        const handler = () => { if (pc.iceGatheringState === 'complete') { pc.removeEventListener('icegatheringstatechange', handler); resolve(); } };
+        pc.addEventListener('icegatheringstatechange', handler);
+        // Fallback timeout after 3s
+        setTimeout(resolve, 3000);
+      });
+
+      const finalSdp = pc.localDescription;
+      if (!finalSdp) throw new Error('Failed to generate SDP offer.');
+
+      // Step 1: Send SDP offer to API → proxied to SRS → get answer
       const res = await api.post(`/streams/${id}/webrtc/offer`, {
-        sdp: offer.sdp,
-        type: offer.type,
+        sdp: finalSdp.sdp,
+        type: finalSdp.type,
       }) as unknown as { data: { sdp: string; type: RTCSdpType } };
 
+      // Step 2: Set the SRS answer as remote description
       await pc.setRemoteDescription(new RTCSessionDescription({ sdp: res.data.sdp, type: res.data.type }));
 
-      // Also start the stream in our state machine
+      // Step 3: Transition stream state machine to broadcast_starting
       await api.post(`/streams/${id}/start`);
     },
     onSuccess: () => {
       setConnecting(false);
       qc.invalidateQueries({ queryKey: ['stream', id] });
-      toast.success('Broadcasting live!');
+      toast.success('Broadcasting live via Browser Studio!');
     },
     onError: (e: unknown) => {
       setConnecting(false);
       pcRef.current?.close();
-      toast.error((e as { message: string }).message || 'Failed to start broadcast.');
+      const msg = (e as { message?: string }).message || 'Failed to start broadcast.';
+      toast.error(msg);
     },
   });
 

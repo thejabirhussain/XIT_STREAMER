@@ -4,6 +4,7 @@ import {
   BadRequestException,
   Logger,
 } from '@nestjs/common';
+import axios from 'axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
@@ -335,5 +336,69 @@ export class StreamsService {
       where: { streamKey },
       relations: ['destinations'],
     });
+  }
+
+  /**
+   * Handle a WebRTC SDP offer from Browser Studio.
+   * Proxies the offer to SRS /rtc/v1/publish/ and returns the SDP answer.
+   * SRS acts as the WebRTC endpoint — the browser publishes directly into SRS,
+   * which then makes the stream available for FFmpeg to consume via RTMP.
+   */
+  async handleWebRtcOffer(
+    userId: string,
+    streamId: string,
+    offer: { sdp: string; type: string },
+  ): Promise<{ sdp: string; type: string }> {
+    const session = await this.getStream(userId, streamId);
+
+    if (session.ingestType !== 'webrtc') {
+      throw new BadRequestException(
+        'This stream was configured for RTMP ingest. To use Browser Studio, create a stream with ingestType="webrtc".',
+      );
+    }
+
+    const srsHttpApi = this.configService.get<string>('media.srsHttpApi', 'http://localhost:1985');
+    const streamUrl = `webrtc://localhost/live/${session.streamKey}`;
+
+    this.logger.log(`WebRTC offer received for stream ${streamId} — proxying to SRS`);
+
+    try {
+      const srsResponse = await axios.post(
+        `${srsHttpApi}/rtc/v1/publish/`,
+        {
+          api: `${srsHttpApi}/rtc/v1/publish/`,
+          clientip: null,
+          sdp: offer.sdp,
+          streamurl: streamUrl,
+          tid: `xit-${streamId.slice(0, 8)}`,
+        },
+        { timeout: 15000, headers: { 'Content-Type': 'application/json' } },
+      );
+
+      const srsData = srsResponse.data;
+
+      if (srsData.code !== 0) {
+        this.logger.error(`SRS WebRTC negotiate failed: code=${srsData.code}`);
+        throw new BadRequestException(
+          `SRS WebRTC negotiation failed (code ${srsData.code}). Ensure the SRS RTC server is running and configured.`,
+        );
+      }
+
+      this.logger.log(`WebRTC answer returned for stream ${streamId}`);
+
+      return {
+        sdp: srsData.sdp,
+        type: 'answer',
+      };
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response) {
+        throw new BadRequestException(
+          `SRS WebRTC error: ${JSON.stringify(error.response.data)}`,
+        );
+      }
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(`WebRTC offer proxy failed: ${msg}`);
+      throw new BadRequestException(`Failed to negotiate WebRTC session: ${msg}`);
+    }
   }
 }

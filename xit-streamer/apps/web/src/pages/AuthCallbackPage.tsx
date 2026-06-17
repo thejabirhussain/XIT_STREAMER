@@ -38,6 +38,7 @@ export function AuthCallbackPage() {
         toast.success(
           provider === 'youtube' ? '✓ YouTube connected successfully' :
           provider === 'meta' ? '✓ Facebook connected successfully' :
+          provider === 'instagram' ? '✓ Instagram connected successfully' :
           '✓ Logged in successfully'
         );
         navigate('/dashboard');

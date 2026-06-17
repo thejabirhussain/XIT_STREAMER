@@ -16,6 +16,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser, JwtPayload } from '../common/decorators/current-user.decorator';
 import { CreateStreamDto } from './dto/create-stream.dto';
 import { UpdateStreamDto } from './dto/update-stream.dto';
+import { WebRtcOfferDto } from './dto/webrtc-offer.dto';
 
 @Controller('streams')
 @UseGuards(JwtAuthGuard)
@@ -122,5 +123,24 @@ export class StreamsController {
     @Query('platform') platform?: string,
   ) {
     return this.streamsService.getChatHistory(id, page || 1, limit || 50, platform);
+  }
+
+  /**
+   * POST /api/streams/:id/webrtc/offer
+   * Browser Studio sends its SDP offer here.
+   * The API proxies it to SRS /rtc/v1/publish/ and returns the SDP answer.
+   * This enables browser-based WebRTC streaming without OBS Studio.
+   */
+  @Post(':id/webrtc/offer')
+  @HttpCode(HttpStatus.OK)
+  async webrtcOffer(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: WebRtcOfferDto,
+  ) {
+    return this.streamsService.handleWebRtcOffer(user.sub, id, {
+      sdp: dto.sdp,
+      type: dto.type,
+    });
   }
 }

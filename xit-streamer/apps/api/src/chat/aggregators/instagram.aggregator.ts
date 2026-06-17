@@ -4,19 +4,16 @@ import { ChatService } from '../chat.service';
 /**
  * Instagram Live Comments aggregator.
  *
- * ARCHITECTURE NOTE (Phase 1):
- * Instagram live comment aggregation is architecture-ready.
- * The adapter interface is complete and the webhook controller routes
- * Instagram events to this class. However, full implementation requires
- * Meta App Review for instagram_manage_comments scope.
+ * Instagram live comments arrive via Meta Webhook (same webhook endpoint as Facebook).
+ * This aggregator processes them and stores/broadcasts via ChatService.
  *
- * Enable by:
- * 1. Completing Meta App Review for instagram_manage_comments
- * 2. Configuring Instagram webhook subscription for live_comments
- * 3. Uncommenting the processing logic below
+ * PERMISSION REQUIREMENT:
+ * instagram_manage_comments scope is required for live comment webhooks.
+ * This scope requires Meta App Review for production apps, but is available
+ * in development mode for test users and accounts that added the app.
  *
- * This adapter is non-blocking — its absence does not prevent
- * YouTube and Facebook aggregation from working.
+ * The /api/auth/instagram flow requests this scope. Once connected,
+ * Meta will deliver instagram_live_comments events to /api/webhooks/meta.
  */
 @Injectable()
 export class InstagramAggregator {
@@ -34,21 +31,16 @@ export class InstagramAggregator {
     from: { id: string; username: string };
     timestamp?: string;
   }): Promise<void> {
-    this.logger.debug(
-      `Instagram live comment received for session ${sessionId} — ` +
-      `Instagram aggregation is architecture-ready but not yet activated. ` +
-      `Complete Meta App Review to enable.`,
-    );
+    this.logger.debug(`Instagram live comment for session ${sessionId}: @${comment.from.username}: ${comment.text}`);
 
-    // Architecture-ready: uncomment to activate when permissions are approved
-    // await this.chatService.saveAndBroadcast({
-    //   sessionId,
-    //   platform: 'instagram',
-    //   externalId: comment.id,
-    //   username: comment.from.id,
-    //   displayName: comment.from.username,
-    //   message: comment.text,
-    //   platformTs: comment.timestamp ? new Date(comment.timestamp) : undefined,
-    // });
+    await this.chatService.saveAndBroadcast({
+      sessionId,
+      platform: 'instagram',
+      externalId: comment.id,
+      username: comment.from.id,
+      displayName: comment.from.username,
+      message: comment.text,
+      platformTs: comment.timestamp ? new Date(comment.timestamp) : undefined,
+    });
   }
 }

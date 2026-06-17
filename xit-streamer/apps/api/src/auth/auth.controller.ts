@@ -67,7 +67,7 @@ export class AuthController {
 
   /**
    * GET /api/auth/meta
-   * Redirect user to Meta OAuth consent screen.
+   * Redirect user to Meta OAuth consent screen (Facebook + Pages).
    */
   @Get('meta')
   metaAuth(@Res() res: Response): void {
@@ -101,6 +101,47 @@ export class AuthController {
     } catch (err) {
       this.logger.error(`Meta callback error: ${err instanceof Error ? err.message : 'Unknown error'}`);
       res.redirect(`${appUrl}/login?error=meta_callback_failed`);
+    }
+  }
+
+  /**
+   * GET /api/auth/instagram
+   * Redirect user to Meta/Instagram OAuth consent screen.
+   * Requests Instagram-specific scopes including instagram_manage_comments.
+   */
+  @Get('instagram')
+  instagramAuth(@Res() res: Response): void {
+    const authUrl = this.authService.getInstagramAuthUrl();
+    res.redirect(authUrl);
+  }
+
+  /**
+   * GET /api/auth/callback/instagram
+   * Handle Instagram OAuth callback — discovers the linked Instagram Business Account
+   * via the user's Facebook Pages and stores it as platform='instagram'.
+   */
+  @Get('callback/instagram')
+  async instagramCallback(
+    @Query('code') code: string,
+    @Query('error') error: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const appUrl = this.configService.get<string>('appUrl', 'http://localhost:3000');
+
+    if (error || !code) {
+      this.logger.warn(`Instagram OAuth failed: ${error || 'no code received'}`);
+      res.redirect(`${appUrl}/login?error=instagram_auth_failed`);
+      return;
+    }
+
+    try {
+      const result = await this.authService.handleInstagramCallback(code);
+      res.redirect(
+        `${appUrl}/auth/callback?token=${result.jwt}&refreshToken=${result.refreshToken}&provider=instagram`,
+      );
+    } catch (err) {
+      this.logger.error(`Instagram callback error: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      res.redirect(`${appUrl}/login?error=instagram_callback_failed`);
     }
   }
 

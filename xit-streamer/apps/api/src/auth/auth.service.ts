@@ -146,7 +146,7 @@ export class AuthService {
   }
 
   /**
-   * Generate the Meta OAuth2 authorization URL.
+   * Generate the Meta (Facebook) OAuth2 authorization URL.
    */
   getMetaAuthUrl(state?: string): string {
     const appId = this.configService.get<string>('meta.appId');
@@ -172,6 +172,149 @@ export class AuthService {
     });
 
     return `https://www.facebook.com/v19.0/dialog/oauth?${params.toString()}`;
+  }
+
+  /**
+   * Generate the Instagram OAuth2 authorization URL.
+   * Instagram uses the same Meta App but with a dedicated callback URL
+   * and requests instagram_manage_comments for chat aggregation.
+   */
+  getInstagramAuthUrl(state?: string): string {
+    const appId = this.configService.get<string>('meta.appId');
+    const callbackUrl = this.configService.get<string>('meta.callbackUrl', 'http://localhost:4000/api/auth/callback/meta');
+    // Redirect to the dedicated Instagram callback
+    const redirectUri = callbackUrl.replace('/callback/meta', '/callback/instagram');
+
+    const scopes = [
+      'instagram_basic',
+      'instagram_content_publish',
+      'instagram_manage_comments',
+      'pages_show_list',
+      'pages_read_engagement',
+      'public_profile',
+      'email',
+    ].join(',');
+
+    const params = new URLSearchParams({
+      client_id: appId || '',
+      redirect_uri: redirectUri,
+      scope: scopes,
+      response_type: 'code',
+      ...(state ? { state } : {}),
+    });
+
+    return `https://www.facebook.com/v19.0/dialog/oauth?${params.toString()}`;
+  }
+
+  /**
+   * Handle Instagram OAuth callback.
+   * Uses the Meta token to discover the linked Instagram Business Account
+   * and stores it as platform='instagram'.
+   */
+  async handleInstagramCallback(code: string): Promise<{ jwt: string; refreshToken: string; user: User }> {
+    const appId = this.configService.get<string>('meta.appId');
+    const appSecret = this.configService.get<string>('meta.appSecret');
+    const callbackUrl = this.configService.get<string>('meta.callbackUrl', 'http://localhost:4000/api/auth/callback/meta');
+    const redirectUri = callbackUrl.replace('/callback/meta', '/callback/instagram');
+
+    // Exchange code for short-lived token
+    const tokenResponse = await axios.get('https://graph.facebook.com/v19.0/oauth/access_token', {
+      params: { client_id: appId, client_secret: appSecret, redirect_uri: redirectUri, code },
+    });
+    const shortLivedToken = tokenResponse.data.access_token;
+
+    // Exchange for long-lived token (60 days)
+    const longLivedResponse = await axios.get('https://graph.facebook.com/v19.0/oauth/access_token', {
+      params: { grant_type: 'fb_exchange_token', client_id: appId, client_secret: appSecret, fb_exchange_token: shortLivedToken },
+    });
+    const longLivedToken = longLivedResponse.data.access_token;
+    const expiresIn = longLivedResponse.data.expires_in || 5184000;
+
+    // Get Facebook user profile (needed to find Instagram account)
+    const profileResponse = await axios.get('https://graph.facebook.com/v19.0/me', {
+      params: { fields: 'id,name,email,picture', access_token: longLivedToken },
+    });
+    const { name, email, picture } = profileResponse.data;
+    const avatarUrl = picture?.data?.url || '';
+
+    // Upsert user
+    let user = await this.userRepo.findOne({ where: { email } });
+    if (!user) {
+      user = this.userRepo.create({ email, name, avatarUrl });
+      user = await this.userRepo.save(user);
+      this.logger.log(`Created new user from Instagram OAuth: ${email}`);
+    } else {
+      user.name = name || user.name;
+      user.avatarUrl = avatarUrl || user.avatarUrl;
+      user = await this.userRepo.save(user);
+    }
+
+    // Discover Instagram Business Account via Pages
+    // Instagram Business Accounts are linked to Facebook Pages
+    let instagramAccountId: string | null = null;
+    let instagramUsername: string | null = null;
+
+    try {
+      const pagesResponse = await axios.get('https://graph.facebook.com/v19.0/me/accounts', {
+        params: { access_token: longLivedToken, fields: 'id,name,access_token,instagram_business_account' },
+      });
+
+      for (const page of pagesResponse.data.data || []) {
+        if (page.instagram_business_account?.id) {
+          instagramAccountId = page.instagram_business_account.id;
+          // Get Instagram profile info
+          try {
+            const igProfile = await axios.get(`https://graph.facebook.com/v19.0/${instagramAccountId}`, {
+              params: { fields: 'id,username,name', access_token: page.access_token || longLivedToken },
+            });
+            instagramUsername = igProfile.data.username || igProfile.data.name || 'Instagram Account';
+          } catch {
+            instagramUsername = 'Instagram Account';
+          }
+          break; // Use first linked Instagram account
+        }
+      }
+    } catch (error) {
+      this.logger.warn(`Failed to discover Instagram Business Account: ${error instanceof Error ? error.message : 'Unknown'}`);
+    }
+
+    // Store Instagram connection
+    const encryptedToken = this.cryptoService.encrypt(longLivedToken);
+    const expiresAt = new Date(Date.now() + expiresIn * 1000);
+
+    const igAccountId = instagramAccountId || `ig_${profileResponse.data.id}`;
+    const igDisplayName = instagramUsername || name;
+
+    let igConnection = await this.connectionRepo.findOne({
+      where: { userId: user.id, platform: 'instagram', accountId: igAccountId },
+    });
+
+    if (igConnection) {
+      igConnection.encryptedAccessToken = encryptedToken;
+      igConnection.tokenExpiresAt = expiresAt;
+      igConnection.connectionStatus = 'connected';
+      igConnection.accountName = igDisplayName;
+      igConnection.lastSyncedAt = new Date();
+    } else {
+      igConnection = this.connectionRepo.create({
+        userId: user.id,
+        platform: 'instagram',
+        accountName: igDisplayName,
+        accountId: igAccountId,
+        avatarUrl,
+        encryptedAccessToken: encryptedToken,
+        tokenExpiresAt: expiresAt,
+        connectionStatus: 'connected',
+        lastSyncedAt: new Date(),
+      });
+    }
+
+    await this.connectionRepo.save(igConnection);
+    this.logger.log(`Instagram connected for user ${user.id}: ${igDisplayName} (account: ${igAccountId})`);
+
+    const jwt = this.issueJwt(user);
+    const appRefreshToken = this.issueRefreshToken(user);
+    return { jwt, refreshToken: appRefreshToken, user };
   }
 
   /**
