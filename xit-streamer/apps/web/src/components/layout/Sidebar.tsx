@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
+import { ThemeToggle } from '../ThemeToggle';
 import {
   LayoutDashboard,
   Link2,
@@ -178,6 +179,17 @@ export function Sidebar() {
             </div>
           </div>
         )}
+        {/* Theme Toggle */}
+        <div style={{
+          display: 'flex', alignItems: 'center',
+          gap: '10px',
+          padding: collapsed ? '8px 0' : '8px var(--space-3)',
+          justifyContent: collapsed ? 'center' : 'flex-start',
+          marginBottom: '2px',
+        }}>
+          <ThemeToggle />
+          {!collapsed && <span style={{ fontSize: '13px', color: 'var(--color-text-muted)' }}>Theme</span>}
+        </div>
         <button
           onClick={handleLogout}
           title={collapsed ? 'Logout' : undefined}

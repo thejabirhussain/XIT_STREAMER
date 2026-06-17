@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { User, Shield, Radio, Bell, Trash2 } from 'lucide-react';
+import { User, Shield, Radio, Bell, Trash2, Palette, Sun, Moon, Monitor } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuthStore } from '../stores/auth.store';
 import { Button } from '../components/ui/Button';
@@ -9,9 +9,11 @@ import { Card } from '../components/ui/Card';
 import { Input } from '../components/ui/Input';
 import { Badge } from '../components/ui/Badge';
 import { toast } from '../components/ui/Toast';
+import { useThemeStore } from '../stores/themeStore';
 
 const SETTINGS_NAV = [
   { section: 'Account', items: [{ id: 'profile', label: 'Profile', icon: User }] },
+  { section: 'Appearance', items: [{ id: 'appearance', label: 'Theme', icon: Palette }] },
   { section: 'Streaming', items: [{ id: 'rtmp', label: 'RTMP Settings', icon: Radio }] },
   { section: 'Notifications', items: [{ id: 'alerts', label: 'Alerts', icon: Bell }] },
 ];
@@ -23,6 +25,7 @@ export function SettingsPage() {
   const navigate = useNavigate();
   const [active, setActive] = useState('profile');
   const [name, setName] = useState(user?.name || '');
+  const { theme, setTheme } = useThemeStore();
 
   const { data: connectionsData } = useQuery({
     queryKey: ['connections'],
@@ -177,6 +180,43 @@ export function SettingsPage() {
                 >
                   Delete Account
                 </Button>
+              </div>
+            </Card>
+          </>
+        )}
+
+        {active === 'appearance' && (
+          <>
+            <div>
+              <h2 style={{ fontSize: '20px', fontWeight: 700, letterSpacing: '-0.02em', marginBottom: '4px' }}>Appearance</h2>
+              <p style={{ margin: 0 }}>Choose how XIT Streamer looks for you.</p>
+            </div>
+            <Card>
+              <h3 style={{ fontSize: '15px', fontWeight: 600, marginBottom: 'var(--space-4)' }}>Theme</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--space-3)' }}>
+                {[
+                  { key: 'light' as const, icon: Sun, label: 'Light', desc: 'Clean and bright' },
+                  { key: 'dark' as const, icon: Moon, label: 'Dark', desc: 'Easy on the eyes' },
+                ].map(({ key, icon: Icon, label, desc }) => (
+                  <button
+                    key={key}
+                    onClick={() => setTheme(key)}
+                    id={`theme-${key}`}
+                    style={{
+                      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px',
+                      padding: 'var(--space-5) var(--space-3)',
+                      borderRadius: 'var(--radius-xl)',
+                      background: theme === key ? 'var(--color-accent-glow)' : 'var(--color-surface-2)',
+                      border: theme === key ? '2px solid var(--color-accent)' : '2px solid var(--color-border)',
+                      cursor: 'pointer',
+                      transition: 'all var(--transition-fast)',
+                    }}
+                  >
+                    <Icon size={24} color={theme === key ? 'var(--color-accent)' : 'var(--color-text-muted)'} />
+                    <span style={{ fontSize: '14px', fontWeight: 600, color: theme === key ? 'var(--color-text)' : 'var(--color-text-muted)' }}>{label}</span>
+                    <span style={{ fontSize: '12px', color: 'var(--color-text-subtle)' }}>{desc}</span>
+                  </button>
+                ))}
               </div>
             </Card>
           </>

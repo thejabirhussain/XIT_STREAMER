@@ -545,6 +545,13 @@ export class StreamsService {
     });
   }
 
+  async findById(id: string): Promise<LivestreamSession | null> {
+    return this.sessionRepo.findOne({
+      where: { id },
+      relations: ['destinations'],
+    });
+  }
+
   /**
    * Handle a WebRTC SDP offer from Browser Studio.
    * Proxies the offer to SRS /rtc/v1/publish/ and returns the SDP answer.

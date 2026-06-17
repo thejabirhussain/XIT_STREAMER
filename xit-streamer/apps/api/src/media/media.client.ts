@@ -31,6 +31,8 @@ export class MediaClient {
       platform: string;
       connectionId: string;
       accessToken: string;
+      rtmpUrl?: string;
+      streamKey?: string;
     }>;
   }): Promise<void> {
     try {
@@ -42,6 +44,8 @@ export class MediaClient {
           platform: d.platform,
           connection_id: d.connectionId,
           access_token: d.accessToken,
+          rtmp_url: d.rtmpUrl,
+          stream_key: d.streamKey,
         })),
       };
       await this.http.post(`/streams/${sessionId}/start`, payload);

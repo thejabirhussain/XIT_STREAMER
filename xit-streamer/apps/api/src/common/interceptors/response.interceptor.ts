@@ -21,7 +21,13 @@ export class ResponseInterceptor<T> implements NestInterceptor<T, ApiResponse<T>
   intercept(
     context: ExecutionContext,
     next: CallHandler,
-  ): Observable<ApiResponse<T>> {
+  ): Observable<any> {
+    const request = context.switchToHttp().getRequest();
+    const url = request?.url;
+    if (url && url.includes('/api/internal/')) {
+      return next.handle();
+    }
+
     return next.handle().pipe(
       map((data) => {
         // If the response already has the envelope format, pass through

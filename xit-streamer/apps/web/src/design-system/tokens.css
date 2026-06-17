@@ -102,6 +102,50 @@
   --content-padding:     var(--space-6);
 }
 
+/* ─── Light Theme ─────────────────────────────────────────────────────────── */
+[data-theme="light"] {
+  --color-bg:           #FAFAFA;
+  --color-surface:      #FFFFFF;
+  --color-surface-2:    #F5F5F7;
+  --color-surface-3:    #EBEBEF;
+  --color-border:       #E2E2E8;
+  --color-border-soft:  #D5D5DC;
+
+  --color-text:         #111118;
+  --color-text-muted:   #5C5C6E;
+  --color-text-subtle:  #8E8E9E;
+
+  --color-accent:       #6C63FF;
+  --color-accent-dark:  #5A52E0;
+  --color-accent-light: #8B85FF;
+  --color-accent-glow:  rgba(108, 99, 255, 0.12);
+  --color-accent-bg:    rgba(108, 99, 255, 0.06);
+
+  --color-green:        #16A34A;
+  --color-green-bg:     rgba(22, 163, 74, 0.08);
+  --color-red:          #DC2626;
+  --color-red-bg:       rgba(220, 38, 38, 0.08);
+  --color-yellow:       #D97706;
+  --color-yellow-bg:    rgba(217, 119, 6, 0.08);
+  --color-blue:         #2563EB;
+  --color-blue-bg:      rgba(37, 99, 235, 0.08);
+
+  /* Platform Colors — slightly adjusted for light backgrounds */
+  --color-youtube:      #DC2626;
+  --color-youtube-bg:   rgba(220, 38, 38, 0.08);
+  --color-facebook:     #2563EB;
+  --color-facebook-bg:  rgba(37, 99, 235, 0.08);
+  --color-instagram:    #6C63FF;
+  --color-instagram-bg: rgba(108, 99, 255, 0.08);
+
+  /* Shadows — lighter for light mode */
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.06), 0 0 0 1px var(--color-border);
+  --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.08), 0 0 0 1px var(--color-border-soft);
+  --shadow-modal: 0 24px 64px rgba(0, 0, 0, 0.12), 0 0 0 1px var(--color-border);
+  --shadow-accent: 0 0 0 2px var(--color-accent);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.1);
+}
+
 /* ─── Global Reset & Base ────────────────────────────────────────────────── */
 *, *::before, *::after {
   box-sizing: border-box;

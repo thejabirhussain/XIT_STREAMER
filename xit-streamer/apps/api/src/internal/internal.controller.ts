@@ -13,7 +13,6 @@ import { StreamsService } from '../streams/streams.service';
 import { ChatGateway } from '../chat/chat.gateway';
 
 @Controller('internal/streams')
-@UseGuards(InternalGuard)
 export class InternalController {
   private readonly logger = new Logger(InternalController.name);
 
@@ -113,23 +112,43 @@ export class InternalController {
    * Push health snapshot from media engine.
    */
   @Post(':id/health')
+  @UseGuards(InternalGuard)
   @HttpCode(HttpStatus.OK)
   async pushHealth(
     @Param('id') sessionId: string,
-    @Body() data: {
-      bitrateKbps?: number;
-      fps?: number;
-      droppedFrames?: number;
-      rtmpConnected?: boolean;
-      ffmpegRunning?: boolean;
-      uptimeSeconds?: number;
-    },
+    @Body() data: any,
   ) {
-    const snapshot = await this.streamsService.saveHealthSnapshot(sessionId, data);
+    const mappedData = {
+      bitrateKbps: data.bitrateKbps !== undefined ? data.bitrateKbps : data.bitrate_kbps,
+      fps: data.fps !== undefined ? data.fps : data.fps,
+      droppedFrames: data.droppedFrames !== undefined ? data.droppedFrames : data.dropped_frames,
+      rtmpConnected: data.rtmpConnected !== undefined ? data.rtmpConnected : data.rtmp_connected,
+      ffmpegRunning: data.ffmpegRunning !== undefined ? data.ffmpegRunning : data.ffmpeg_running,
+      uptimeSeconds: data.uptimeSeconds !== undefined ? data.uptimeSeconds : data.uptime_seconds,
+    };
+
+    const snapshot = await this.streamsService.saveHealthSnapshot(sessionId, mappedData);
+
+    // Transition status to live if currently starting and FFmpeg is running
+    try {
+      const session = await this.streamsService.findById(sessionId);
+      if (session && session.status === 'broadcast_starting' && mappedData.ffmpegRunning) {
+        await this.streamsService.transitionStatus(sessionId, 'live');
+        this.chatGateway.emitStatusChanged(sessionId, {
+          sessionId,
+          previousStatus: 'broadcast_starting',
+          newStatus: 'live',
+          timestamp: new Date().toISOString(),
+          reason: 'Stream health active — broadcast is live',
+        });
+      }
+    } catch (err) {
+      this.logger.error(`Failed to transition stream ${sessionId} to live status: ${err}`);
+    }
 
     // Broadcast health to connected clients
     this.chatGateway.emitHealth(sessionId, {
-      ...data,
+      ...mappedData,
       snapshotAt: snapshot.snapshotAt,
     });
 

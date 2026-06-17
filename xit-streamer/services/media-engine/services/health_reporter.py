@@ -61,6 +61,12 @@ class HealthReporter:
 
                 decoded = line.decode("utf-8", errors="ignore").strip()
 
+                try:
+                    with open("/Users/shaikmohammedjabirhussain/.gemini/antigravity-ide/brain/ab0a22a6-6206-44fb-8e67-e9a1882a01cf/scratch/ffmpeg_stderr.log", "a") as f:
+                        f.write(decoded + "\n")
+                except Exception:
+                    pass
+
                 # Parse bitrate: "bitrate=4500.2kbits/s" or "bitrate= 4500kbits/s"
                 bitrate_match = re.search(r"bitrate=\s*([\d.]+)kbits/s", decoded)
                 if bitrate_match:

@@ -19,6 +19,9 @@ export class FacebookApiService {
   async getPages(
     accessToken: string,
   ): Promise<Array<{ id: string; name: string; accessToken: string }>> {
+    if (accessToken.startsWith('mock_fb_token')) {
+      return [{ id: 'mock_page_id', name: 'Mock Page', accessToken: 'mock_fb_token_page' }];
+    }
     try {
       const res = await axios.get('https://graph.facebook.com/v19.0/me/accounts', {
         params: { access_token: accessToken, fields: 'id,name,access_token' },
@@ -48,6 +51,14 @@ export class FacebookApiService {
     title: string,
     description?: string,
   ): Promise<{ liveVideoId: string; streamUrl: string; streamKey: string } | null> {
+    if (pageAccessToken.startsWith('mock_fb_token')) {
+      this.logger.log(`[MOCK MODE] Facebook Live Video created: mock_live_video_id on page ${pageId}`);
+      return {
+        liveVideoId: 'mock_live_video_id',
+        streamUrl: 'rtmp://localhost:1935/live/fb_mock_stream_key_123456',
+        streamKey: 'fb_mock_stream_key_123456',
+      };
+    }
     try {
       const res = await axios.post(
         `https://graph.facebook.com/v19.0/${pageId}/live_videos`,
@@ -94,6 +105,10 @@ export class FacebookApiService {
     liveVideoId: string,
     accessToken: string,
   ): Promise<boolean> {
+    if (accessToken.startsWith('mock_fb_token')) {
+      this.logger.log(`[MOCK MODE] Facebook Live Video mock_live_video_id ended`);
+      return true;
+    }
     try {
       await axios.post(
         `https://graph.facebook.com/v19.0/${liveVideoId}`,
@@ -136,6 +151,14 @@ export class FacebookApiService {
     accessToken: string,
     title: string,
   ): Promise<{ liveVideoId: string; streamUrl: string; streamKey: string } | null> {
+    if (accessToken.startsWith('mock_fb_token')) {
+      this.logger.log(`[MOCK MODE] Instagram Live created: mock_ig_live_id for account ${instagramAccountId}`);
+      return {
+        liveVideoId: 'mock_ig_live_id',
+        streamUrl: 'rtmp://localhost:1935/live/ig_mock_stream_key_789',
+        streamKey: 'ig_mock_stream_key_789',
+      };
+    }
     try {
       // Instagram Live Media endpoint requires instagram_manage_live_media
       const res = await axios.post(

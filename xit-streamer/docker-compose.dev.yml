@@ -1,0 +1,52 @@
+# ─── XIT Streamer — Local Development Infrastructure ─────────────────────
+# Only runs PostgreSQL, Redis, and SRS. 
+# API, Media Engine, and Frontend run directly on the host.
+# Usage: docker compose -f docker-compose.dev.yml up -d
+# ─────────────────────────────────────────────────────────────────────────
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-xit}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-xit_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-xit_streamer}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-xit}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  srs:
+    image: ossrs/srs:5
+    volumes:
+      - ./infrastructure/srs/srs.conf:/usr/local/srs/conf/docker.conf
+    ports:
+      - "1935:1935"     # RTMP ingest
+      - "1985:1985"     # SRS HTTP API
+      - "8080:8080"     # HTTP/HLS server
+      - "8000:8000/udp" # WebRTC UDP
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  postgres_data:
+  redis_data:
