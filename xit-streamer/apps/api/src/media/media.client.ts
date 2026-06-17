@@ -34,7 +34,17 @@ export class MediaClient {
     }>;
   }): Promise<void> {
     try {
-      await this.http.post(`/streams/${sessionId}/start`, data);
+      // Translate camelCase → snake_case for the Python/FastAPI media engine (Pydantic models)
+      const payload = {
+        stream_key: data.streamKey,
+        ingest_type: data.ingestType,
+        destinations: data.destinations.map((d) => ({
+          platform: d.platform,
+          connection_id: d.connectionId,
+          access_token: d.accessToken,
+        })),
+      };
+      await this.http.post(`/streams/${sessionId}/start`, payload);
       this.logger.log(`Media engine: started stream ${sessionId}`);
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : 'Unknown error';
