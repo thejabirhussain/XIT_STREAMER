@@ -18,6 +18,8 @@ import { MediaClient } from '../media/media.client';
 import { CryptoService } from '../common/crypto/crypto.service';
 import { CreateStreamDto } from './dto/create-stream.dto';
 import { UpdateStreamDto } from './dto/update-stream.dto';
+import { YouTubeApiService } from '../platforms/youtube-api.service';
+import { FacebookApiService } from '../platforms/facebook-api.service';
 
 /**
  * Valid state transitions for the stream state machine.
@@ -51,6 +53,8 @@ export class StreamsService {
     private readonly mediaClient: MediaClient,
     private readonly configService: ConfigService,
     private readonly cryptoService: CryptoService,
+    private readonly youTubeApiService: YouTubeApiService,
+    private readonly facebookApiService: FacebookApiService,
   ) {}
 
   /**
@@ -197,36 +201,209 @@ export class StreamsService {
   }
 
   /**
-   * Start streaming — notify media engine to begin FFmpeg forwarding.
+   * Start streaming:
+   * 1. For each connected platform, call the platform Live API to get a stream key
+   * 2. Store stream destinations with real RTMP URLs + stream keys
+   * 3. Notify the media engine to start FFmpeg forwarding
+   * 4. Transition state to broadcast_starting
    */
   async startStream(userId: string, streamId: string): Promise<LivestreamSession> {
     const session = await this.getStream(userId, streamId);
 
-    if (!['created', 'scheduled'].includes(session.status)) {
+    // Allow starting from created, scheduled, or broadcast_starting (retry after OBS connects)
+    const startableStates = ['created', 'scheduled', 'broadcast_starting', 'error'];
+    if (!startableStates.includes(session.status)) {
       throw new BadRequestException(
-        `Cannot start stream in "${session.status}" state. Stream must be "created" or "scheduled".`,
+        `Cannot start stream in "${session.status}" state.`,
       );
     }
 
-    // Build destination info for media engine
-    const destinations = await this.destRepo.find({
+    // Get all connected platform connections for this user
+    const connections = await this.connectionRepo.find({ where: { userId } });
+
+    // Get or create destinations for all connected platforms
+    let destinations = await this.destRepo.find({
       where: { sessionId: streamId },
       relations: ['connection'],
     });
 
-    const destInfo = [];
-    for (const dest of destinations) {
-      if (dest.connection) {
-        const accessToken = this.cryptoService.decrypt(dest.connection.encryptedAccessToken);
-        destInfo.push({
-          platform: dest.platform,
-          connectionId: dest.connectionId,
-          accessToken,
+    // If no destinations exist yet, auto-create one per connected platform
+    if (destinations.length === 0 && connections.length > 0) {
+      for (const conn of connections) {
+        const dest = this.destRepo.create({
+          sessionId: streamId,
+          connectionId: conn.id,
+          platform: conn.platform,
+          status: 'pending',
         });
+        await this.destRepo.save(dest);
+      }
+      // Reload destinations with relations
+      destinations = await this.destRepo.find({
+        where: { sessionId: streamId },
+        relations: ['connection'],
+      });
+    }
+
+    // For each destination, call the platform API to get a real stream key
+    const destInfo: Array<{ platform: string; connectionId: string; accessToken: string; rtmpUrl?: string; streamKey?: string }> = [];
+
+    for (const dest of destinations) {
+      if (!dest.connection) continue;
+
+      let accessToken: string;
+      try {
+        accessToken = this.cryptoService.decrypt(dest.connection.encryptedAccessToken);
+      } catch {
+        this.logger.error(`Failed to decrypt token for connection ${dest.connectionId}`);
+        await this.destRepo.update(dest.id, { status: 'error', errorMessage: 'Token decryption failed' });
+        continue;
+      }
+
+      // Check if token needs refresh (YouTube)
+      if (dest.platform === 'youtube' && dest.connection.tokenExpiresAt) {
+        const expiresAt = new Date(dest.connection.tokenExpiresAt);
+        const fiveMinFromNow = new Date(Date.now() + 5 * 60 * 1000);
+        if (expiresAt < fiveMinFromNow && dest.connection.encryptedRefreshToken) {
+          this.logger.log(`YouTube token expiring soon for connection ${dest.connectionId}, refreshing...`);
+          try {
+            const refreshToken = this.cryptoService.decrypt(dest.connection.encryptedRefreshToken);
+            const clientId = this.configService.get<string>('youtube.clientId', '');
+            const clientSecret = this.configService.get<string>('youtube.clientSecret', '');
+            const refreshed = await this.youTubeApiService.refreshAccessToken(refreshToken, clientId, clientSecret);
+            if (refreshed) {
+              accessToken = refreshed.accessToken;
+              // Update stored token
+              const newEncrypted = this.cryptoService.encrypt(refreshed.accessToken);
+              await this.connectionRepo.update(dest.connection.id, {
+                encryptedAccessToken: newEncrypted,
+                tokenExpiresAt: new Date(Date.now() + refreshed.expiresIn * 1000),
+                lastSyncedAt: new Date(),
+              });
+              this.logger.log(`YouTube token refreshed for connection ${dest.connectionId}`);
+            }
+          } catch (e) {
+            this.logger.warn(`Token refresh failed: ${e}`);
+          }
+        }
+      }
+
+      // Call platform API to create the live session
+      if (dest.platform === 'youtube') {
+        this.logger.log(`Creating YouTube live broadcast for stream ${streamId}...`);
+        const result = await this.youTubeApiService.createLiveStream(
+          accessToken,
+          session.title,
+          session.description || undefined,
+        );
+
+        if (result) {
+          // Store YouTube broadcast/stream IDs on the session
+          await this.sessionRepo.update(streamId, {
+            youtubeBroadcastId: result.broadcastId,
+            youtubeStreamId: result.streamId,
+          });
+
+          // Update destination with real RTMP URL and stream key
+          const fullRtmpUrl = `${result.rtmpUrl}/${result.streamKey}`;
+          await this.destRepo.update(dest.id, {
+            rtmpUrl: fullRtmpUrl,
+            streamKey: result.streamKey,
+            status: 'active',
+          });
+
+          destInfo.push({
+            platform: dest.platform,
+            connectionId: dest.connectionId,
+            accessToken,
+            rtmpUrl: fullRtmpUrl,
+            streamKey: result.streamKey,
+          });
+
+          this.logger.log(`YouTube: broadcast=${result.broadcastId}, streamKey=${result.streamKey.slice(0,8)}...`);
+        } else {
+          await this.destRepo.update(dest.id, { status: 'error', errorMessage: 'Failed to create YouTube live broadcast. Check YouTube API credentials.' });
+          this.logger.error(`Failed to create YouTube live broadcast for stream ${streamId}`);
+        }
+
+      } else if (dest.platform === 'facebook') {
+        this.logger.log(`Creating Facebook Live Video for stream ${streamId}...`);
+
+        // Get the Page ID for this connection
+        const pageId = dest.connection.accountId;
+        const result = await this.facebookApiService.createLiveVideo(
+          pageId,
+          accessToken,
+          session.title,
+          session.description || undefined,
+        );
+
+        if (result) {
+          await this.sessionRepo.update(streamId, {
+            facebookLiveId: result.liveVideoId,
+          });
+
+          await this.destRepo.update(dest.id, {
+            rtmpUrl: result.streamUrl,
+            streamKey: result.streamKey,
+            status: 'active',
+          });
+
+          destInfo.push({
+            platform: dest.platform,
+            connectionId: dest.connectionId,
+            accessToken,
+            rtmpUrl: result.streamUrl,
+            streamKey: result.streamKey,
+          });
+
+          this.logger.log(`Facebook: liveVideoId=${result.liveVideoId}`);
+        } else {
+          await this.destRepo.update(dest.id, { status: 'error', errorMessage: 'Failed to create Facebook Live Video. Check page permissions.' });
+          this.logger.error(`Failed to create Facebook live video for stream ${streamId}`);
+        }
+
+      } else if (dest.platform === 'instagram') {
+        this.logger.log(`Attempting Instagram Live creation for stream ${streamId}...`);
+
+        const instagramAccountId = dest.connection.accountId;
+        const result = await this.facebookApiService.createInstagramLive(
+          instagramAccountId,
+          accessToken,
+          session.title,
+        );
+
+        if (result) {
+          await this.sessionRepo.update(streamId, {
+            instagramLiveId: result.liveVideoId,
+          });
+
+          await this.destRepo.update(dest.id, {
+            rtmpUrl: result.streamUrl,
+            streamKey: result.streamKey,
+            status: 'active',
+          });
+
+          destInfo.push({
+            platform: dest.platform,
+            connectionId: dest.connectionId,
+            accessToken,
+            rtmpUrl: result.streamUrl,
+            streamKey: result.streamKey,
+          });
+
+          this.logger.log(`Instagram: liveVideoId=${result.liveVideoId}`);
+        } else {
+          await this.destRepo.update(dest.id, {
+            status: 'error',
+            errorMessage: 'Instagram Live requires instagram_manage_live_media scope (Meta App Review required for production).',
+          });
+          this.logger.warn(`Instagram Live creation failed — requires instagram_manage_live_media scope`);
+        }
       }
     }
 
-    // Notify media engine
+    // Notify media engine to start FFmpeg (even with 0 destinations for monitoring)
     try {
       await this.mediaClient.startStream(streamId, {
         streamKey: session.streamKey,
@@ -240,25 +417,55 @@ export class StreamsService {
       );
     }
 
-    return this.transitionStatus(streamId, 'broadcast_starting');
+    // Transition to broadcast_starting (idempotent from any startable state)
+    const current = await this.sessionRepo.findOne({ where: { id: streamId } });
+    if (current && !['broadcast_starting', 'live'].includes(current.status)) {
+      return this.transitionStatus(streamId, 'broadcast_starting');
+    }
+    return this.sessionRepo.findOne({ where: { id: streamId }, relations: ['destinations'] }) as Promise<LivestreamSession>;
   }
 
   /**
-   * End stream — notify media engine to stop FFmpeg.
+   * End stream — stop FFmpeg, complete YouTube broadcast, end Facebook live video.
    */
   async endStream(userId: string, streamId: string): Promise<LivestreamSession> {
     const session = await this.getStream(userId, streamId);
 
-    if (session.status !== 'live') {
+    // Allow stopping from live OR broadcast_starting (stuck streams)
+    if (!['live', 'broadcast_starting'].includes(session.status)) {
       throw new BadRequestException(
-        `Cannot end stream in "${session.status}" state. Stream must be "live".`,
+        `Cannot end stream in "${session.status}" state. Stream must be "live" or "broadcast_starting".`,
       );
     }
 
+    // Stop FFmpeg
     try {
       await this.mediaClient.endStream(streamId);
     } catch (error) {
       this.logger.error(`Failed to end stream via media engine: ${error}`);
+    }
+
+    // Complete platform live sessions
+    const destinations = await this.destRepo.find({ where: { sessionId: streamId }, relations: ['connection'] });
+
+    for (const dest of destinations) {
+      if (!dest.connection) continue;
+      try {
+        const accessToken = this.cryptoService.decrypt(dest.connection.encryptedAccessToken);
+
+        if (dest.platform === 'youtube' && session.youtubeBroadcastId) {
+          await this.youTubeApiService.completeBroadcast(accessToken, session.youtubeBroadcastId);
+          this.logger.log(`YouTube broadcast ${session.youtubeBroadcastId} completed`);
+        } else if (dest.platform === 'facebook' && session.facebookLiveId) {
+          await this.facebookApiService.endLiveVideo(session.facebookLiveId, accessToken);
+          this.logger.log(`Facebook live ${session.facebookLiveId} ended`);
+        }
+
+        await this.destRepo.update(dest.id, { status: 'completed' });
+      } catch (error) {
+        this.logger.warn(`Failed to end platform session for ${dest.platform}: ${error}`);
+        await this.destRepo.update(dest.id, { status: 'completed' });
+      }
     }
 
     return this.transitionStatus(streamId, 'ending');

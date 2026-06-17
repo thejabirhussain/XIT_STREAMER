@@ -24,8 +24,9 @@ export class InternalController {
 
   /**
    * POST /api/internal/streams/on-publish
-   * Called by SRS when an RTMP stream is published.
-   * The stream key is extracted from the SRS payload.
+   * Called by SRS when an RTMP stream is published (OBS connects).
+   * Triggers the full platform startup: creates YouTube/Facebook live objects,
+   * generates real stream keys, starts FFmpeg forwarding.
    */
   @Post('on-publish')
   @HttpCode(HttpStatus.OK)
@@ -44,20 +45,28 @@ export class InternalController {
       return { code: 0 };
     }
 
-    // Transition to broadcast_starting
-    if (['created', 'scheduled'].includes(session.status)) {
-      const updated = await this.streamsService.transitionStatus(session.id, 'broadcast_starting');
+    // Trigger full platform startup if not already started
+    if (['created', 'scheduled', 'broadcast_starting'].includes(session.status)) {
+      this.logger.log(`on_publish: starting stream ${session.id} for user ${session.userId}`);
 
-      this.chatGateway.emitStatusChanged(session.id, {
-        sessionId: session.id,
-        previousStatus: session.status,
-        newStatus: 'broadcast_starting',
-        timestamp: new Date().toISOString(),
-        reason: 'RTMP stream received by ingest server',
+      // Run platform API calls and FFmpeg launch in background (don't block SRS)
+      setImmediate(async () => {
+        try {
+          await this.streamsService.startStream(session.userId, session.id);
+          this.chatGateway.emitStatusChanged(session.id, {
+            sessionId: session.id,
+            previousStatus: session.status,
+            newStatus: 'broadcast_starting',
+            timestamp: new Date().toISOString(),
+            reason: 'RTMP stream received — platforms starting',
+          });
+        } catch (error) {
+          this.logger.error(`on_publish startStream failed for ${session.id}: ${error}`);
+        }
       });
     }
 
-    // Allow SRS to accept the stream
+    // Allow SRS to accept the stream immediately (don't wait for platform APIs)
     return { code: 0 };
   }
 

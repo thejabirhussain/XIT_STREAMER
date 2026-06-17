@@ -12,6 +12,7 @@ import { ChatMessage } from '../entities/chat-message.entity';
 import { PlatformConnection } from '../entities/platform-connection.entity';
 import { CryptoService } from '../common/crypto/crypto.service';
 import { MediaModule } from '../media/media.module';
+import { PlatformsModule } from '../platforms/platforms.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { MediaModule } from '../media/media.module';
       }),
     }),
     MediaModule,
+    PlatformsModule,
   ],
   controllers: [StreamsController],
   providers: [StreamsService, StreamKeyService, CryptoService],
