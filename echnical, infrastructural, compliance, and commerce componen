@@ -1,0 +1,186 @@
+Viewed generate_masterclass.js:1-45
+
+This breakdown explains how every technical, infrastructural, compliance, and commerce component in XIT Streamer works from first principles.
+
+---
+
+## 1. Why Shopify? (E-Commerce Build vs. Integrate Decision)
+
+Building an enterprise-grade commerce infrastructure from scratch is a massive undertaking. We integrate with **Shopify** because it solves three core problems:
+
+```
+[ Custom Checkout Build ]                         [ Shopify App Integration ]
+- Build custom shopping cart                       - Off-the-shelf cart & checkout
+- Undergo PCI-DSS Level 1 audits (6-9 mos)         - Instantly PCI-DSS compliant
+- Integrate Stripe, PayPal, Apple Pay, etc.        - Supported gateways pre-integrated
+- Write complex tax nexus engines                  - Automatic global tax calculation
+- Build warehouse & shipping integrations          - Hundreds of shipping app integrations
+```
+
+### The Value of Shopify:
+1. **PCI-DSS Compliance (Payment Security):** Storing, processing, or transmitting credit card numbers requires strict PCI-DSS Level 1 compliance. Failing to comply can result in massive fines. Shopify handles payment security, shifting all liability away from XIT Streamer.
+2. **Global Tax Engine (Nexus Laws):** Under US tax laws, selling across state lines requires tracking local sales tax codes. Shopify handles the calculation of local sales taxes on shipping addresses automatically.
+3. **App Ecosystem & Fulfillment:** Shopify connects directly to shipping systems (ShipStation, DHL) and inventory software. By building inside Shopify, we plug directly into our clients' existing fulfillment pipelines.
+4. **Custom Commerce vs. Integration Moat:** We can build a custom database for checkout and payments using Stripe, but it would require months of development and security compliance auditing. Shopify allows merchants to connect their existing storefronts in seconds.
+
+---
+
+## 2. Platform App Reviews, Quotas, and Ingress APIs
+
+Social networks protect their servers and users by enforcing strict app reviews and rate limits.
+
+```
+                  [ Creator Dashboard Setup ]
+                              |
+     +------------------------+------------------------+
+     | (YouTube Data API v3)                           | (Meta Graph API)
+     v                                                 v
+- liveBroadcasts.insert (Create Broadcast)        - POST /me/live_videos (Create FB Stream)
+- liveStreams.insert (Generate RTMP Key)          - Meta App Review Approval required
+- liveBroadcasts.bind (Link Stream)               - Facebook Webhook Configuration
+- Polling for comments (500ms intervals)          - Graph API for Instagram DM automation
+```
+
+### A. YouTube Live API
+*   **The Review Process:** Standard Google OAuth verification. You register your project, set scopes, and submit the app. Once verified, the developer warning screen disappears.
+*   **Auto-Scheduling & Activation:**
+    1.  **Create Broadcast:** XIT calls the `liveBroadcasts.insert` endpoint, passing stream title, description, and start time. YouTube returns a `broadcastId`.
+    2.  **Create Stream:** XIT calls `liveStreams.insert` to generate a stream key. YouTube returns the `streamId` and the RTMP ingest URL.
+    3.  **Bind:** XIT calls `liveBroadcasts.bind` to link the stream key to the broadcast.
+    4.  **Activation:** When Alex starts streaming from OBS, the feed goes to YouTube's ingest servers. YouTube checks if data is arriving. XIT’s backend polls the status, and once it detects video, it calls `liveBroadcasts.transition` to change the broadcast status to **"live"**.
+*   **Chat Ingestion:** YouTube does not support webhooks for live chat. XIT must call the `liveChatMessages.list` API. We retrieve the `activeLiveChatId` from the broadcast details and query comments using long-polling at 500ms intervals.
+
+### B. Meta API (Facebook & Instagram Live)
+*   **Meta App Review (Strict):** Facebook enforces a detailed review process. To access `publish_video`, `live_video`, and `instagram_manage_messages` in production, you must:
+    *   Complete **Business Verification** (submitting corporate tax documents).
+    *   Record step-by-step screencast videos demonstrating how users connect their accounts and how comments trigger automated direct messages.
+*   **Auto-Scheduling & Ingest:**
+    *   For Facebook, XIT sends a `POST /me/live_videos` (for personal profile) or `POST /{page-id}/live_videos` (for business page). Facebook returns a secure `stream_url` and a `secure_stream_key` along with a video ID.
+    *   For Instagram, XIT sends a `POST /{instagram-business-account-id}/live_media`. Meta returns an RTMP upload URL and a secure key.
+*   **Chat Ingestion:** Facebook and Instagram support webhooks. When a user posts a comment on the live video, Meta sends an HTTPS POST webhook containing the user ID and comment directly to XIT's gateway.
+
+### C. TikTok Live (The Closed API)
+*   **API Policy:** TikTok does not offer a public API for streaming or chat capture. 
+*   **How XIT Handles It:** TikTok requires entering their developer program to request private API access. As a fallback, creators must use **OBS Custom RTMP** configs. They copy their TikTok stream keys directly from the TikTok mobile app and paste them into XIT, which handles the replication.
+
+---
+
+## 3. The Livestream Media Pipeline (SRS, RTMP, WebRTC, FFmpeg)
+
+To get video from Alex's camera to YouTube, Facebook, Instagram, and his website embed in near real-time, we use a custom media pipeline:
+
+```
+[ Input: Alex's Browser ] --(WebRTC)--> [ WebRTC SFU Gateway ]
+                                                 |
+                                            (Transcode)
+                                                 |
+                                                 v
+                                       [ SRS Ingest Server ]
+                                                 |
+                                     [ Spawn FFmpeg Worker ]
+                                                 |
+             +--------------------+--------------+--------------+--------------------+
+             |                    |                             |                    |
+             v                    v                             v                    v
+     [ YouTube RTMPS ]    [ Facebook RTMPS ]            [ Instagram RTMPS ]    [ Custom Web HLS ]
+```
+
+### The Ingress Protocols
+1.  **RTMP / RTMPS (OBS / Encoders):** Real-Time Messaging Protocol. Standard ingest format for social platforms.
+2.  **WebRTC (Browser Studio):** Low-latency browser streaming protocol. Ideal for webcam capture directly in Chrome without plugins.
+3.  **SRT (Mobile App):** Secure Reliable Transport. Excellent for mobile apps streaming over cellular networks (4G/5G) as it handles packet loss and network jitter better than RTMP.
+
+### Under the Hood Operations
+*   **SRS (Simple RTMP Server):** SRS acts as the entry gate on our server cluster. 
+    *   If Alex streams from **OBS**, SRS receives the RTMP stream directly.
+    *   If Alex streams from the **Browser**, the stream arrives via WebRTC at a gateway (Janus/Mediasoup), which decodes the browser WebRTC codecs (VP8/VP9 video) and encodes them into H.264/AAC for SRS ingestion.
+*   **The FFmpeg worker:** Once SRS receives the RTMP stream, it triggers a webhook. The Stream Service spawns a dedicated **FFmpeg** container process to handle replication.
+*   **Replication & Forwarding:** The FFmpeg process replicates the inbound video stream and forwards it in parallel to target platforms. It uses `-c:v copy` and `-c:a copy` (codec copy), meaning it does not decode the stream. It simply duplicates the raw packet bytes in system memory, keeping server CPU load near-zero and preventing latency.
+*   **Web HLS Player:** The custom website widget reads HLS video files split from the SRS feed, presenting the stream directly on the merchant's online storefront page.
+
+---
+
+## 4. Product Spotlight: Showcasing 1 of 10 Products
+
+If a creator has 10 products configured for their livestream but only wants to showcase **one product at a time**, the system uses a **Spotlight state machine**.
+
+```
+[ Creator Dashboard ] --(Click Spotlight SKU #chair)--> [ WebSocket: activeProduct = #chair ]
+                                                                       |
+                             +-----------------------------------------+-----------------------------------------+
+                             |                                                                                   |
+                             v                                                                                   v
+                [ Overlays Engine (FFmpeg) ]                                                         [ Web Embed Player ]
+                             |                                                                                   |
+             (Bake graphic card overlay into video)                                             (Render interactive HTML layer on web page)
+                             |                                                                                   |
+                             v                                                                                   v
+             [ Flat Video Feed to Socials ]                                                          [ Clickable Add-to-Cart Widget ]
+```
+
+### How the Workflow Operates:
+1.  **State Management:** In the database, the active stream model contains an `active_product_id` field. By default, it is `null`.
+2.  **Activating a Product:** Alex clicks the **"Spotlight"** button next to Product #3 (Vibrant Gaming Chair, trigger code `#chair`) in his control panel.
+3.  **The State Switch:** The control panel fires a WebSocket event `spotlight_product_change` containing the SKU details. The backend updates the database and cache, setting `active_product_id = prod_003`.
+4.  **Displaying the Banner on Livestreams:**
+    *   **On Social Channels (YouTube, Facebook, Instagram Live):** Since video feeds are flat, XIT must bake the banner visual directly into the video stream. The Overlays Engine uses FFmpeg's `overlay` filter. It generates an image card of the active product (including image, title, price, and trigger code) and overlays it onto the video coordinates. When Alex switches products, the engine replaces the source overlay image file, showing a transition animation on stream.
+    *   **On the Web Embed Player (Website):** On Alex's storefront page, we control the media container. Instead of baking the banner into the video, the website player reads the stream metadata and renders a clean, **clickable HTML widget** on top of the player. Viewers on the website can click this widget to add the item directly to their cart.
+
+---
+
+## 5. Comment-to-Buy and Order Attribution Pipeline
+
+Here is the end-to-end journey of a viewer purchasing a product during a live session:
+
+```
+[ Viewer comments: "buy #chair" ] ---> [ Platform Chat Ingest ]
+                                                   |
+                                                   v
+                                        [ Kafka Event Queue ]
+                                                   |
+                                                   v
+                                      [ Regex Parser (Fuzzy Match) ]
+                                                   |
+                                                   v
+                                     [ Shopify draftOrderCreate API ]
+                                                   |
+                                                   v
+                                      [ Short Link URL Generation ]
+                                                   |
+                                                   v
+                                     [ Meta Direct Message Dispatch ]
+                                                   |
+                                     (Customer completes payment)
+                                                   |
+                                                   v
+                                      [ Shopify orders/create Webhook ]
+                                                   |
+                                                   v
+                                     [ Attribute Order to Live Session ]
+```
+
+1.  **Connecting Accounts:** The merchant links their social channels via OAuth 2.0 and installs the XIT app on their Shopify dashboard. XIT registers webhooks on Shopify for product catalog and order events.
+2.  **Broadcast Setup:** The creator selects 10 products and schedules the stream.
+3.  **Streaming:** The stream is replicated and pushed to YouTube, Facebook, and Instagram.
+4.  **Comment Ingestion:** Viewers on Facebook and Instagram post comments. Meta webhooks send the payloads to XIT's gateway. YouTube comments are pulled via API long-polling.
+5.  **Kafka Queueing:** Comments are pushed to a Kafka topic.
+6.  **Intent Detection & Fuzzy Matching:** A parser consumes comments and runs a regex match. XIT uses fuzzy string matching (like Levenshtein distance) to catch typos. If a customer comments `buy #chari` or `want chair`, the parser corrects it to `#chair`.
+7.  **Shopify Draft Order Creation:**
+    *   XIT calls Shopify's GraphQL API (`draftOrderCreate`).
+    *   It passes the customer's social username as a metafield and adds the active product SKU to the line items.
+    *   Shopify creates the draft order, reserves the item inventory for 15 minutes, and returns a secure payment invoice URL.
+8.  **Link Generation and DM Dispatch:**
+    *   XIT converts the long Shopify checkout URL into a shortened link (e.g., `xit.la/39d91`).
+    *   It calls Meta's Direct Message API to send a message to the viewer's inbox: *"Hey! Tap here to complete your order for the Vibrant Gaming Chair: [Short Link]"*.
+9.  **Checkout & Webhook Attribution:**
+    *   The viewer taps the link in their DM, lands on Shopify's secure checkout page, and pays.
+    *   Upon successful payment, Shopify sends an `orders/create` webhook payload to XIT.
+    *   The payload contains the draft order ID. XIT maps this ID to verify the checkout completed, updates the live sales dashboard, and attributes the revenue to that specific livestream session in PostgreSQL.
+
+---
+
+## 6. How Competitors Solve This
+
+*   **Sprii.io (Social Commerce Specialist):** Focuses heavily on direct Meta integrations. They default to mobile app camera streams and use direct checkout page routing via Shopify draft orders, with typo-tolerant keyword matching. They lack advanced multi-platform broadcasting setups.
+*   **Restream / StreamYard (Video Specialist):** Excellent video routers (using SRS-like pipelines and FFmpeg duplication). They do not offer deep e-commerce sync, comment-to-buy parsers, or cart checkout automation.
+*   **Livescale (Brand Storefront Specialist):** Embeds an interactive player on the merchant's website, rendering clickable HTML shop cards over the stream. They do not offer automated comment-to-buy DM checkouts on social platforms.
