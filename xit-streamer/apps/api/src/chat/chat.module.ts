@@ -22,6 +22,6 @@ import { CryptoService } from '../common/crypto/crypto.service';
     InstagramAggregator,
     CryptoService,
   ],
-  exports: [ChatService, ChatGateway],
+  exports: [ChatService, ChatGateway, YouTubeAggregator, FacebookAggregator, InstagramAggregator],
 })
 export class ChatModule {}

@@ -5,7 +5,7 @@ import subprocess
 import time
 from typing import Optional
 from config import settings
-from services.stream_forwarder import build_ffmpeg_command
+from services.stream_forwarder import build_ffmpeg_command, wait_for_srs_stream
 from services.health_reporter import HealthReporter
 
 logger = logging.getLogger("ffmpeg-manager")
@@ -38,6 +38,12 @@ class FFmpegManager:
             logger.warning(f"FFmpeg already running for session {session_id}")
             return True
 
+        # For WebRTC streams: wait for SRS to report the stream as ready
+        # so FFmpeg doesn't start before the browser has published
+        if ingest_type == "webrtc":
+            logger.info(f"WebRTC stream — waiting for SRS to receive stream '{stream_key}'…")
+            await wait_for_srs_stream(stream_key, max_wait_seconds=15)
+
         cmd = build_ffmpeg_command(stream_key, ingest_type, destinations)
 
         try:
@@ -49,7 +55,9 @@ class FFmpegManager:
             )
 
             self._processes[session_id] = process
-            self._retry_counts[session_id] = 0
+            # Preserve the counter when start() is called by the crash-retry
+            # path; resetting it here would allow infinite retries.
+            self._retry_counts.setdefault(session_id, 0)
             self._start_times[session_id] = time.time()
 
             # Start health reporter (parses stderr in background)

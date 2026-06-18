@@ -11,6 +11,7 @@ import { Card } from '../components/ui/Card';
 import { StatusDot } from '../components/ui/StatusDot';
 import { Toggle } from '../components/ui/Toggle';
 import { toast } from '../components/ui/Toast';
+import { Modal } from '../components/ui/Modal';
 
 function formatUptime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -49,10 +50,11 @@ export function StreamDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const { health, setHealth, chatMessages, addChatMessage, setStatus } = useStreamStore();
+  const { health, setHealth, chatMessages, addChatMessage, setStatus, setActiveSession, setChatMessages } = useStreamStore();
   const chatRef = useRef<HTMLDivElement>(null);
-  const [chatFilter, setChatFilter] = useState<'all' | 'youtube' | 'facebook'>('all');
+  const [chatFilter, setChatFilter] = useState<'all' | 'youtube' | 'facebook' | 'instagram'>('all');
   const [uptimeDisplay, setUptimeDisplay] = useState(0);
+  const [showConfirmEnd, setShowConfirmEnd] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['stream', id],
@@ -60,6 +62,32 @@ export function StreamDetailPage() {
     refetchInterval: 10000,
   });
   const stream = (data as unknown as { data?: Record<string, unknown> })?.data;
+
+  // Set active session and fetch chat history
+  useEffect(() => {
+    if (!id) return;
+    setActiveSession(id);
+
+    api.get(`/streams/${id}/chat?limit=100`)
+      .then((res: any) => {
+        if (res?.data) {
+          setChatMessages(res.data);
+          // Wait for DOM to render, then scroll to bottom
+          setTimeout(() => {
+            if (chatRef.current) {
+              chatRef.current.scrollTop = chatRef.current.scrollHeight;
+            }
+          }, 100);
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to fetch stream chat history:', err);
+      });
+
+    return () => {
+      setActiveSession(null);
+    };
+  }, [id, setActiveSession, setChatMessages]);
 
   // Socket.IO
   useEffect(() => {
@@ -117,7 +145,12 @@ export function StreamDetailPage() {
 
   const s = stream as { id: string; title: string; status: string; streamKey: string; rtmpIngestUrl: string; recordingEnabled: boolean; destinations?: { platform: string; status: string }[]; startedAt?: string; ingestType: string };
   const isLive = s.status === 'live';
-  const canStart = ['created', 'scheduled'].includes(s.status);
+  const isBroadcastStarting = s.status === 'broadcast_starting';
+  const isError = s.status === 'error';
+  // Start Stream is only for RTMP streams in created/scheduled state
+  const canStartRtmp = ['created', 'scheduled'].includes(s.status) && s.ingestType === 'rtmp';
+  // WebRTC streams: show "Open Browser Studio" instead of "Start Stream"
+  const isWebRtc = s.ingestType === 'webrtc';
   const filteredChat = chatMessages.filter((m) => chatFilter === 'all' || m.platform === chatFilter);
 
   const statusBadge = {
@@ -150,20 +183,29 @@ export function StreamDetailPage() {
             {formatUptime(uptimeDisplay)}
           </code>
         )}
-        <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-          {s.ingestType === 'webrtc' && (
+        <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
+          {/* Browser Studio button — for webrtc streams in any pre-live state */}
+          {isWebRtc && !isLive && (
             <Button variant="secondary" size="sm" icon={<Monitor size={14} />} onClick={() => navigate(`/streams/${s.id}/studio`)} id="btn-open-studio">
               Browser Studio
             </Button>
           )}
-          {canStart && (
+          {/* Start Stream — only for RTMP streams that haven't started */}
+          {canStartRtmp && (
             <Button variant="primary" size="sm" loading={startMutation.isPending} onClick={() => startMutation.mutate()} id="btn-start-stream">
               Start Stream
             </Button>
           )}
-          {isLive && (
-            <Button variant="danger" size="sm" loading={endMutation.isPending} onClick={() => { if (confirm('End stream?')) endMutation.mutate(); }} icon={<Square size={14} />} id="btn-end-stream">
+          {/* End Stream — available when live OR broadcast_starting (to cancel stuck streams) */}
+          {(isLive || isBroadcastStarting) && (
+            <Button variant="danger" size="sm" loading={endMutation.isPending} onClick={() => setShowConfirmEnd(true)} icon={<Square size={14} />} id="btn-end-stream">
               End Stream
+            </Button>
+          )}
+          {/* Retry button for error state */}
+          {isError && (
+            <Button variant="secondary" size="sm" icon={<RefreshCw size={14} />} onClick={() => api.post(`/streams/${s.id}/retry`).then(() => qc.invalidateQueries({ queryKey: ['stream', s.id] }))} id="btn-retry-stream">
+              Retry Stream
             </Button>
           )}
         </div>
@@ -230,7 +272,7 @@ export function StreamDetailPage() {
           <div style={{ padding: 'var(--space-4) var(--space-5)', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
             <h2 style={{ fontSize: '15px', fontWeight: 600, margin: 0 }}>Live Chat</h2>
             <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-              {(['all', 'youtube', 'facebook'] as const).map((f) => (
+              {(['all', 'youtube', 'facebook', 'instagram'] as const).map((f) => (
                 <button
                   key={f}
                   id={`chat-filter-${f}`}
@@ -287,6 +329,23 @@ export function StreamDetailPage() {
           )}
         </div>
       </div>
+
+      {/* End Stream Modal */}
+      <Modal
+        open={showConfirmEnd}
+        onClose={() => setShowConfirmEnd(false)}
+        title="End Livestream"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setShowConfirmEnd(false)}>Cancel</Button>
+            <Button variant="danger" loading={endMutation.isPending} onClick={() => { setShowConfirmEnd(false); endMutation.mutate(); }}>End Stream</Button>
+          </>
+        }
+      >
+        <p style={{ margin: 0, fontSize: '14px', color: 'var(--color-text-muted)', lineHeight: '1.5' }}>
+          Are you sure you want to end this livestream? This will disconnect all forwarders and complete your broadcasts on YouTube, Facebook, and Instagram.
+        </p>
+      </Modal>
     </div>
   );
 }

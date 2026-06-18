@@ -48,6 +48,46 @@ export class YouTubeAggregator {
         }
 
         const accessToken = this.cryptoService.decrypt(connection.encryptedAccessToken);
+        const isMock = accessToken.startsWith('mock_') || connection.accountId?.includes('mock_');
+
+        if (isMock) {
+          const mockMessages = [
+            "Awesome stream!",
+            "Hello from YouTube chat!",
+            "This unified dashboard is super fast!",
+            "XIT Streamer works perfectly!",
+            "How is the latency so low?",
+            "Great work on the WebRTC-to-RTMP transcoding!",
+            "Wow, YouTube got the stream instantly!",
+            "Is anyone else watching?",
+            "Yes, the quality is top-notch!",
+            "Loving the custom layouts."
+          ];
+          const mockNames = [
+            "Alice", "Bob", "Charlie", "David", "Emma", "Frank", "Grace", "Hannah", "Ian", "Jack"
+          ];
+
+          const randomMsg = mockMessages[Math.floor(Math.random() * mockMessages.length)];
+          const randomName = mockNames[Math.floor(Math.random() * mockNames.length)];
+          const randomId = `mock_yt_msg_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+
+          await this.chatService.saveAndBroadcast({
+            sessionId,
+            platform: 'youtube',
+            externalId: randomId,
+            username: `mock_yt_user_${randomName.toLowerCase()}`,
+            displayName: randomName,
+            avatarUrl: `https://images.unsplash.com/photo-${1500000000000 + Math.floor(Math.random() * 100000)}?w=100&h=100&fit=crop`,
+            message: randomMsg,
+            platformTs: new Date(),
+          });
+
+          // Schedule next poll (randomly 3-8 seconds)
+          const interval = 3000 + Math.random() * 5000;
+          const timer = setTimeout(poll, interval);
+          this.activePollers.set(sessionId, timer);
+          return;
+        }
 
         const params: Record<string, string> = {
           liveChatId,

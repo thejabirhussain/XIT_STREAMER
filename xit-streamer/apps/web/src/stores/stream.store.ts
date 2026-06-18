@@ -31,6 +31,7 @@ interface StreamState {
   setStatus: (status: string) => void;
   setHealth: (health: HealthSnapshot) => void;
   addChatMessage: (msg: ChatMessage) => void;
+  setChatMessages: (messages: ChatMessage[]) => void;
   setChatFilter: (filter: 'all' | 'youtube' | 'facebook' | 'instagram') => void;
   clearChatMessages: () => void;
 }
@@ -50,6 +51,7 @@ export const useStreamStore = create<StreamState>((set) => ({
       // Keep last 500 messages in memory
       chatMessages: [...state.chatMessages.slice(-499), msg],
     })),
+  setChatMessages: (chatMessages) => set({ chatMessages }),
   setChatFilter: (chatFilter) => set({ chatFilter }),
   clearChatMessages: () => set({ chatMessages: [] }),
 }));

@@ -20,6 +20,9 @@ import { CreateStreamDto } from './dto/create-stream.dto';
 import { UpdateStreamDto } from './dto/update-stream.dto';
 import { YouTubeApiService } from '../platforms/youtube-api.service';
 import { FacebookApiService } from '../platforms/facebook-api.service';
+import { YouTubeAggregator } from '../chat/aggregators/youtube.aggregator';
+import { FacebookAggregator } from '../chat/aggregators/facebook.aggregator';
+import { InstagramAggregator } from '../chat/aggregators/instagram.aggregator';
 
 /**
  * Valid state transitions for the stream state machine.
@@ -55,6 +58,9 @@ export class StreamsService {
     private readonly cryptoService: CryptoService,
     private readonly youTubeApiService: YouTubeApiService,
     private readonly facebookApiService: FacebookApiService,
+    private readonly youTubeAggregator: YouTubeAggregator,
+    private readonly facebookAggregator: FacebookAggregator,
+    private readonly instagramAggregator: InstagramAggregator,
   ) {}
 
   /**
@@ -289,19 +295,35 @@ export class StreamsService {
       }
 
       // Call platform API to create the live session
+      const isMock = accessToken.startsWith('mock_') || dest.connection.accountId?.includes('mock_');
+
       if (dest.platform === 'youtube') {
         this.logger.log(`Creating YouTube live broadcast for stream ${streamId}...`);
-        const result = await this.youTubeApiService.createLiveStream(
-          accessToken,
-          session.title,
-          session.description || undefined,
-        );
+        let result: { broadcastId: string; streamId: string; liveChatId?: string; rtmpUrl: string; streamKey: string } | null;
+
+        if (isMock) {
+          result = {
+            broadcastId: `mock_youtube_broadcast_${streamId}`,
+            streamId: `mock_youtube_stream_${streamId}`,
+            liveChatId: `mock_youtube_chat_${streamId}`,
+            rtmpUrl: `rtmp://127.0.0.1:1935/live`,
+            streamKey: `mock_youtube_key_${streamId}`,
+          };
+          this.logger.log(`Using mock YouTube destination for stream ${streamId}`);
+        } else {
+          result = await this.youTubeApiService.createLiveStream(
+            accessToken,
+            session.title,
+            session.description || undefined,
+          );
+        }
 
         if (result) {
-          // Store YouTube broadcast/stream IDs on the session
+          // Store YouTube broadcast/stream IDs and liveChatId on the session
           await this.sessionRepo.update(streamId, {
             youtubeBroadcastId: result.broadcastId,
             youtubeStreamId: result.streamId,
+            youtubeLiveChatId: result.liveChatId || undefined,
           });
 
           // Update destination with real RTMP URL and stream key
@@ -320,7 +342,10 @@ export class StreamsService {
             streamKey: result.streamKey,
           });
 
-          this.logger.log(`YouTube: broadcast=${result.broadcastId}, streamKey=${result.streamKey.slice(0,8)}...`);
+          this.logger.log(
+            `YouTube: broadcast=${result.broadcastId}, streamKey=${result.streamKey.slice(0,8)}..., ` +
+            `liveChatId=${result.liveChatId || 'none'}`,
+          );
         } else {
           await this.destRepo.update(dest.id, { status: 'error', errorMessage: 'Failed to create YouTube live broadcast. Check YouTube API credentials.' });
           this.logger.error(`Failed to create YouTube live broadcast for stream ${streamId}`);
@@ -328,15 +353,24 @@ export class StreamsService {
 
       } else if (dest.platform === 'facebook') {
         this.logger.log(`Creating Facebook Live Video for stream ${streamId}...`);
+        let result: { liveVideoId: string; streamUrl: string; streamKey: string } | null;
 
-        // Get the Page ID for this connection
-        const pageId = dest.connection.accountId;
-        const result = await this.facebookApiService.createLiveVideo(
-          pageId,
-          accessToken,
-          session.title,
-          session.description || undefined,
-        );
+        if (isMock) {
+          result = {
+            liveVideoId: `mock_facebook_video_${streamId}`,
+            streamUrl: `rtmp://127.0.0.1:1935/live/mock_facebook_key_${streamId}`,
+            streamKey: `mock_facebook_key_${streamId}`,
+          };
+          this.logger.log(`Using mock Facebook destination for stream ${streamId}`);
+        } else {
+          const pageId = dest.connection.accountId;
+          result = await this.facebookApiService.createLiveVideo(
+            pageId,
+            accessToken,
+            session.title,
+            session.description || undefined,
+          );
+        }
 
         if (result) {
           await this.sessionRepo.update(streamId, {
@@ -365,13 +399,23 @@ export class StreamsService {
 
       } else if (dest.platform === 'instagram') {
         this.logger.log(`Attempting Instagram Live creation for stream ${streamId}...`);
+        let result: { liveVideoId: string; streamUrl: string; streamKey: string } | null;
 
-        const instagramAccountId = dest.connection.accountId;
-        const result = await this.facebookApiService.createInstagramLive(
-          instagramAccountId,
-          accessToken,
-          session.title,
-        );
+        if (isMock) {
+          result = {
+            liveVideoId: `mock_instagram_video_${streamId}`,
+            streamUrl: `rtmp://127.0.0.1:1935/live/mock_instagram_key_${streamId}`,
+            streamKey: `mock_instagram_key_${streamId}`,
+          };
+          this.logger.log(`Using mock Instagram destination for stream ${streamId}`);
+        } else {
+          const instagramAccountId = dest.connection.accountId;
+          result = await this.facebookApiService.createInstagramLive(
+            instagramAccountId,
+            accessToken,
+            session.title,
+          );
+        }
 
         if (result) {
           await this.sessionRepo.update(streamId, {
@@ -403,7 +447,14 @@ export class StreamsService {
       }
     }
 
-    // Notify media engine to start FFmpeg (even with 0 destinations for monitoring)
+    if (destInfo.length === 0) {
+      throw new BadRequestException(
+        'No streaming destination could be started. Reconnect a platform and check its live-stream permissions.',
+      );
+    }
+
+    // Notify media engine to start FFmpeg after at least one platform accepted
+    // a live destination. FFmpeg cannot run a forwarding command with no output.
     try {
       await this.mediaClient.startStream(streamId, {
         streamKey: session.streamKey,
@@ -445,6 +496,11 @@ export class StreamsService {
       this.logger.error(`Failed to end stream via media engine: ${error}`);
     }
 
+    // Stop all chat pollers for this stream
+    this.youTubeAggregator.stopPolling(streamId);
+    this.facebookAggregator.stopPolling(streamId);
+    this.instagramAggregator.stopPolling(streamId);
+
     // Complete platform live sessions
     const destinations = await this.destRepo.find({ where: { sessionId: streamId }, relations: ['connection'] });
 
@@ -452,13 +508,18 @@ export class StreamsService {
       if (!dest.connection) continue;
       try {
         const accessToken = this.cryptoService.decrypt(dest.connection.encryptedAccessToken);
+        const isMock = accessToken.startsWith('mock_') || dest.connection.accountId?.includes('mock_');
 
-        if (dest.platform === 'youtube' && session.youtubeBroadcastId) {
-          await this.youTubeApiService.completeBroadcast(accessToken, session.youtubeBroadcastId);
-          this.logger.log(`YouTube broadcast ${session.youtubeBroadcastId} completed`);
-        } else if (dest.platform === 'facebook' && session.facebookLiveId) {
-          await this.facebookApiService.endLiveVideo(session.facebookLiveId, accessToken);
-          this.logger.log(`Facebook live ${session.facebookLiveId} ended`);
+        if (isMock) {
+          this.logger.log(`Mock platform ${dest.platform} session ended (bypassed API complete call)`);
+        } else {
+          if (dest.platform === 'youtube' && session.youtubeBroadcastId) {
+            await this.youTubeApiService.completeBroadcast(accessToken, session.youtubeBroadcastId);
+            this.logger.log(`YouTube broadcast ${session.youtubeBroadcastId} completed`);
+          } else if (dest.platform === 'facebook' && session.facebookLiveId) {
+            await this.facebookApiService.endLiveVideo(session.facebookLiveId, accessToken);
+            this.logger.log(`Facebook live ${session.facebookLiveId} ended`);
+          }
         }
 
         await this.destRepo.update(dest.id, { status: 'completed' });
@@ -552,6 +613,13 @@ export class StreamsService {
     });
   }
 
+  async getDestinationsWithConnection(sessionId: string): Promise<StreamDestination[]> {
+    return this.destRepo.find({
+      where: { sessionId },
+      relations: ['connection'],
+    });
+  }
+
   /**
    * Handle a WebRTC SDP offer from Browser Studio.
    * Proxies the offer to SRS /rtc/v1/publish/ and returns the SDP answer.
@@ -592,7 +660,7 @@ export class StreamsService {
       const srsData = srsResponse.data;
 
       if (srsData.code !== 0) {
-        this.logger.error(`SRS WebRTC negotiate failed: code=${srsData.code}`);
+        this.logger.error(`SRS WebRTC negotiate failed: ${JSON.stringify(srsData)}`);
         throw new BadRequestException(
           `SRS WebRTC negotiation failed (code ${srsData.code}). Ensure the SRS RTC server is running and configured.`,
         );

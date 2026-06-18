@@ -8,6 +8,7 @@ import {
   ParseUUIDPipe,
   HttpCode,
   HttpStatus,
+  Body,
 } from '@nestjs/common';
 import { ConnectionsService } from './connections.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -25,6 +26,19 @@ export class ConnectionsController {
   @Get()
   async list(@CurrentUser() user: JwtPayload) {
     return this.connectionsService.listConnections(user.sub);
+  }
+
+  /**
+   * POST /api/connections/mock
+   * Register a mock connection.
+   */
+  @Post('mock')
+  @HttpCode(HttpStatus.CREATED)
+  async mockConnect(
+    @CurrentUser() user: JwtPayload,
+    @Body('platform') platform: 'youtube' | 'facebook' | 'instagram',
+  ) {
+    return this.connectionsService.createMockConnection(user.sub, platform);
   }
 
   /**

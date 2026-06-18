@@ -91,6 +91,9 @@ export class LivestreamSession {
   @Column({ type: 'varchar', length: 255, nullable: true, name: 'youtube_stream_id' })
   youtubeStreamId: string;
 
+  @Column({ type: 'varchar', length: 255, nullable: true, name: 'youtube_live_chat_id' })
+  youtubeLiveChatId: string;
+
   @Column({ type: 'varchar', length: 255, nullable: true, name: 'facebook_live_id' })
   facebookLiveId: string;
 

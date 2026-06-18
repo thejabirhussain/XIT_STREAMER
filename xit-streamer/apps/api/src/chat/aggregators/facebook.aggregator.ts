@@ -44,6 +44,46 @@ export class FacebookAggregator {
         }
 
         const accessToken = this.cryptoService.decrypt(connection.encryptedAccessToken);
+        const isMock = accessToken.startsWith('mock_') || connection.accountId?.includes('mock_');
+
+        if (isMock) {
+          const mockMessages = [
+            "Nice livestream!",
+            "Hello from Facebook!",
+            "Checking out the multi-cast!",
+            "This works like a charm",
+            "Facebook live comment stream connected!",
+            "Wow, very cool dashboard!",
+            "Is this OBS or WebRTC?",
+            "Looks amazing in browser studio!",
+            "Great stream quality!",
+            "Keep up the great work!"
+          ];
+          const mockNames = [
+            "Olivia", "Liam", "Sophia", "Noah", "Jackson", "Ava", "Lucas", "Mia", "Oliver", "Isabella"
+          ];
+
+          const randomMsg = mockMessages[Math.floor(Math.random() * mockMessages.length)];
+          const randomName = mockNames[Math.floor(Math.random() * mockNames.length)];
+          const randomId = `mock_fb_msg_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+
+          await this.chatService.saveAndBroadcast({
+            sessionId,
+            platform: 'facebook',
+            externalId: randomId,
+            username: `mock_fb_user_${randomName.toLowerCase()}`,
+            displayName: randomName,
+            avatarUrl: `https://images.unsplash.com/photo-${1500000000000 + Math.floor(Math.random() * 100000)}?w=100&h=100&fit=crop`,
+            message: randomMsg,
+            platformTs: new Date(),
+          });
+
+          // Schedule next poll (randomly 3-8 seconds)
+          const interval = 3000 + Math.random() * 5000;
+          const timer = setTimeout(poll, interval);
+          this.activePollers.set(sessionId, timer);
+          return;
+        }
 
         const params: Record<string, string> = {
           fields: 'id,message,from{id,name,picture},created_time',

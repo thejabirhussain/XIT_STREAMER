@@ -100,4 +100,57 @@ export class ConnectionsService {
       where: { userId, platform: platform as PlatformConnection['platform'] },
     });
   }
+
+  /**
+   * Create a mock platform connection for development/testing.
+   */
+  async createMockConnection(
+    userId: string,
+    platform: 'youtube' | 'facebook' | 'instagram',
+  ): Promise<Partial<PlatformConnection>> {
+    const accountId = `mock_${platform}_account_id`;
+    const accountName = `Mock ${platform.charAt(0).toUpperCase() + platform.slice(1)} Account`;
+    const avatarUrl = `https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=100&h=100&fit=crop`;
+    const expiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000); // 1 year
+    const encryptedAccess = this.cryptoService.encrypt(`mock_${platform}_token_${Date.now()}`);
+
+    let connection = await this.connectionRepo.findOne({
+      where: { userId, platform, accountId },
+    });
+
+    if (connection) {
+      connection.encryptedAccessToken = encryptedAccess;
+      connection.tokenExpiresAt = expiresAt;
+      connection.connectionStatus = 'connected';
+      connection.accountName = accountName;
+      connection.avatarUrl = avatarUrl;
+      connection.lastSyncedAt = new Date();
+    } else {
+      connection = this.connectionRepo.create({
+        userId,
+        platform,
+        accountName,
+        accountId,
+        avatarUrl,
+        encryptedAccessToken: encryptedAccess,
+        tokenExpiresAt: expiresAt,
+        connectionStatus: 'connected',
+        lastSyncedAt: new Date(),
+      });
+    }
+
+    await this.connectionRepo.save(connection);
+    this.logger.log(`Mock ${platform} connection created/updated for user ${userId}`);
+
+    return {
+      id: connection.id,
+      platform: connection.platform,
+      accountName: connection.accountName,
+      accountId: connection.accountId,
+      avatarUrl: connection.avatarUrl,
+      connectionStatus: connection.connectionStatus,
+      tokenExpiresAt: connection.tokenExpiresAt,
+      lastSyncedAt: connection.lastSyncedAt,
+    };
+  }
 }

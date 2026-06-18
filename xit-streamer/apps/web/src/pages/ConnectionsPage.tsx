@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link2, RefreshCw, Trash2, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
 import { api } from '../lib/api';
@@ -8,6 +8,7 @@ import { Badge } from '../components/ui/Badge';
 import { EmptyState } from '../components/ui/EmptyState';
 import { SkeletonCard } from '../components/ui/Skeleton';
 import { toast } from '../components/ui/Toast';
+import { Modal } from '../components/ui/Modal';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
@@ -65,6 +66,7 @@ function getStatusBadge(status: string, tokenExpiresAt?: string) {
 
 export function ConnectionsPage() {
   const qc = useQueryClient();
+  const [platformToDisconnect, setPlatformToDisconnect] = useState<{ id: string; name: string } | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['connections'],
@@ -80,6 +82,16 @@ export function ConnectionsPage() {
       toast.success('Platform disconnected.');
     },
     onError: () => toast.error('Failed to disconnect platform.'),
+  });
+
+  const mockConnectMutation = useMutation({
+    mutationFn: (platform: 'youtube' | 'facebook' | 'instagram') =>
+      api.post('/connections/mock', { platform }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['connections'] });
+      toast.success('Mock platform connected successfully!');
+    },
+    onError: () => toast.error('Failed to create mock connection.'),
   });
 
   const renderCard = (platformKey: 'youtube' | 'facebook' | 'instagram') => {
@@ -122,9 +134,7 @@ export function ConnectionsPage() {
                 icon={<Trash2 size={14} />}
                 loading={disconnectMutation.isPending}
                 onClick={() => {
-                  if (confirm(`Disconnect ${cfg.name}?`)) {
-                    disconnectMutation.mutate(conn.id);
-                  }
+                  setPlatformToDisconnect({ id: conn.id, name: cfg.name });
                 }}
                 id={`btn-disconnect-${platformKey}`}
               >
@@ -140,21 +150,41 @@ export function ConnectionsPage() {
                 : `Connect your ${cfg.name} account to stream and aggregate chat.`
               }
             </p>
-            {cfg.authUrl ? (
-              <Button
-                variant="primary"
-                size="sm"
-                fullWidth
-                onClick={() => window.location.href = cfg.authUrl!}
-                id={`btn-connect-${platformKey}`}
-              >
-                Connect {cfg.name}
-              </Button>
-            ) : (
-              <Button variant="secondary" size="sm" fullWidth disabled id={`btn-connect-${platformKey}`}>
-                Coming Soon
-              </Button>
-            )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+              {cfg.authUrl ? (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  fullWidth
+                  onClick={() => window.location.href = cfg.authUrl!}
+                  id={`btn-connect-${platformKey}`}
+                >
+                  Connect {cfg.name}
+                </Button>
+              ) : (
+                <Button variant="secondary" size="sm" fullWidth disabled id={`btn-connect-${platformKey}`}>
+                  Coming Soon
+                </Button>
+              )}
+              {import.meta.env.DEV && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  fullWidth
+                  loading={mockConnectMutation.isPending}
+                  onClick={() => mockConnectMutation.mutate(platformKey)}
+                  id={`btn-mock-connect-${platformKey}`}
+                  style={{
+                    borderStyle: 'dashed',
+                    borderColor: 'var(--color-accent)',
+                    color: 'var(--color-accent)',
+                    background: 'rgba(108,99,255,0.05)',
+                  }}
+                >
+                  Developer: Mock Connect
+                </Button>
+              )}
+            </div>
           </div>
         )}
       </Card>
@@ -180,6 +210,36 @@ export function ConnectionsPage() {
             {renderCard('instagram')}
           </div>
       }
+
+      {/* Disconnect Confirmation Modal */}
+      <Modal
+        open={platformToDisconnect !== null}
+        onClose={() => setPlatformToDisconnect(null)}
+        title="Disconnect Platform"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setPlatformToDisconnect(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              loading={disconnectMutation.isPending}
+              onClick={() => {
+                if (platformToDisconnect) {
+                  disconnectMutation.mutate(platformToDisconnect.id);
+                  setPlatformToDisconnect(null);
+                }
+              }}
+            >
+              Disconnect
+            </Button>
+          </>
+        }
+      >
+        <p style={{ margin: 0, fontSize: '14px', color: 'var(--color-text-muted)', lineHeight: '1.5' }}>
+          Are you sure you want to disconnect {platformToDisconnect?.name}? This will prevent streaming to this platform until you reconnect.
+        </p>
+      </Modal>
     </div>
   );
 }

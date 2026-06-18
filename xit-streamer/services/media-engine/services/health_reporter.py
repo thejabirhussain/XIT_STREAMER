@@ -26,6 +26,7 @@ class HealthReporter:
         self.bitrate_kbps: Optional[int] = None
         self.fps: Optional[float] = None
         self.dropped_frames: int = 0
+        self.last_progress_at: Optional[float] = None
 
     async def start(self) -> None:
         """Start parsing stderr and reporting health."""
@@ -61,21 +62,19 @@ class HealthReporter:
 
                 decoded = line.decode("utf-8", errors="ignore").strip()
 
-                try:
-                    with open("/Users/shaikmohammedjabirhussain/.gemini/antigravity-ide/brain/ab0a22a6-6206-44fb-8e67-e9a1882a01cf/scratch/ffmpeg_stderr.log", "a") as f:
-                        f.write(decoded + "\n")
-                except Exception:
-                    pass
-
                 # Parse bitrate: "bitrate=4500.2kbits/s" or "bitrate= 4500kbits/s"
                 bitrate_match = re.search(r"bitrate=\s*([\d.]+)kbits/s", decoded)
                 if bitrate_match:
                     self.bitrate_kbps = int(float(bitrate_match.group(1)))
+                    if self.bitrate_kbps > 0:
+                        self.last_progress_at = time.time()
 
                 # Parse fps: "fps= 30" or "fps=29.97"
                 fps_match = re.search(r"fps=\s*([\d.]+)", decoded)
                 if fps_match:
                     self.fps = float(fps_match.group(1))
+                    if self.fps > 0:
+                        self.last_progress_at = time.time()
 
                 # Parse dropped frames: "drop= 5" or "dup= 3"
                 drop_match = re.search(r"drop=\s*(\d+)", decoded)
@@ -90,13 +89,22 @@ class HealthReporter:
     async def _report_health(self) -> None:
         """Report health snapshot to the API."""
         uptime = int(time.time() - self.start_time)
+        process_running = self.process.poll() is None
+        # A running FFmpeg process may still be blocked waiting for SRS input.
+        # Only call the RTMP path connected after FFmpeg has emitted recent
+        # frame/bitrate progress.
+        media_flowing = (
+            process_running
+            and self.last_progress_at is not None
+            and time.time() - self.last_progress_at < 30
+        )
 
         payload = {
             "bitrate_kbps": self.bitrate_kbps,
             "fps": self.fps,
             "dropped_frames": self.dropped_frames,
-            "rtmp_connected": self.process.poll() is None,
-            "ffmpeg_running": self.process.poll() is None,
+            "rtmp_connected": media_flowing,
+            "ffmpeg_running": process_running,
             "uptime_seconds": uptime,
         }
 

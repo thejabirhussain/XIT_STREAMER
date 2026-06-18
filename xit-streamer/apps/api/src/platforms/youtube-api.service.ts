@@ -15,13 +15,13 @@ export class YouTubeApiService {
 
   /**
    * Create a YouTube live broadcast and bind it to a stream.
-   * Returns the RTMP ingestion URL and stream name (key).
+   * Returns the RTMP ingestion URL, stream name (key), and liveChatId.
    */
   async createLiveStream(
     accessToken: string,
     title: string,
     description?: string,
-  ): Promise<{ broadcastId: string; streamId: string; rtmpUrl: string; streamKey: string } | null> {
+  ): Promise<{ broadcastId: string; streamId: string; rtmpUrl: string; streamKey: string; liveChatId: string } | null> {
     try {
       // Step 1: Create the liveBroadcast
       const broadcastRes = await axios.post(
@@ -55,7 +55,9 @@ export class YouTubeApiService {
       );
 
       const broadcastId: string = broadcastRes.data.id;
-      this.logger.log(`YouTube liveBroadcast created: ${broadcastId}`);
+      // liveChatId is on the broadcast snippet — capture it now for chat polling
+      const liveChatId: string = broadcastRes.data.snippet?.liveChatId || '';
+      this.logger.log(`YouTube liveBroadcast created: ${broadcastId}, liveChatId: ${liveChatId || 'N/A'}`);
 
       // Step 2: Create the liveStream (ingestion configuration)
       const streamRes = await axios.post(
@@ -99,7 +101,7 @@ export class YouTubeApiService {
 
       this.logger.log(`YouTube broadcast ${broadcastId} bound to stream ${streamId}`);
 
-      return { broadcastId, streamId, rtmpUrl, streamKey };
+      return { broadcastId, streamId, rtmpUrl, streamKey, liveChatId };
     } catch (error) {
       const msg = axios.isAxiosError(error)
         ? JSON.stringify(error.response?.data || error.message)
@@ -110,7 +112,8 @@ export class YouTubeApiService {
   }
 
   /**
-   * Transition a broadcast to "live" status (starts the actual livestream).
+   * Transition a broadcast to "live" status (starts the actual public livestream on YouTube).
+   * Must only be called AFTER FFmpeg is confirmed sending data to YouTube's ingest servers.
    */
   async transitionBroadcast(
     accessToken: string,
@@ -133,9 +136,37 @@ export class YouTubeApiService {
       const msg = axios.isAxiosError(error)
         ? JSON.stringify(error.response?.data || error.message)
         : (error instanceof Error ? error.message : 'Unknown error');
-      this.logger.warn(`YouTube broadcast transition failed (may be OK if stream not yet ready): ${msg}`);
+      this.logger.warn(`YouTube broadcast transition to "${status}" failed: ${msg}`);
       return false;
     }
+  }
+
+  /**
+   * Transition broadcast to "live" with automatic retry.
+   * YouTube requires FFmpeg to have sent several seconds of data before the
+   * transition will succeed. Retries up to maxRetries times with retryDelayMs delay.
+   */
+  async transitionToLive(
+    accessToken: string,
+    broadcastId: string,
+    maxRetries = 5,
+    retryDelayMs = 6000,
+  ): Promise<boolean> {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      this.logger.log(`Attempting YouTube live transition for ${broadcastId} (${attempt}/${maxRetries})…`);
+      const success = await this.transitionBroadcast(accessToken, broadcastId, 'live');
+      if (success) return true;
+
+      if (attempt < maxRetries) {
+        this.logger.log(`Broadcast not ready, retrying in ${retryDelayMs / 1000}s…`);
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      }
+    }
+    this.logger.error(
+      `YouTube broadcast ${broadcastId} could not be transitioned to live after ${maxRetries} attempts. ` +
+      `Check that live streaming is enabled on the YouTube channel.`,
+    );
+    return false;
   }
 
   /**
@@ -143,6 +174,30 @@ export class YouTubeApiService {
    */
   async completeBroadcast(accessToken: string, broadcastId: string): Promise<boolean> {
     return this.transitionBroadcast(accessToken, broadcastId, 'complete');
+  }
+
+  /**
+   * Fetch the liveChatId for an existing broadcast.
+   * Use as fallback if liveChatId was not captured during broadcast creation.
+   */
+  async getLiveChatId(accessToken: string, broadcastId: string): Promise<string | null> {
+    try {
+      const res = await axios.get(
+        'https://www.googleapis.com/youtube/v3/liveBroadcasts',
+        {
+          params: { part: 'snippet', id: broadcastId },
+          headers: { Authorization: `Bearer ${accessToken}` },
+          timeout: 10000,
+        },
+      );
+      const chatId: string | null = res.data.items?.[0]?.snippet?.liveChatId || null;
+      this.logger.log(`Fetched liveChatId for broadcast ${broadcastId}: ${chatId}`);
+      return chatId;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Unknown';
+      this.logger.error(`Failed to fetch liveChatId for ${broadcastId}: ${msg}`);
+      return null;
+    }
   }
 
   /**

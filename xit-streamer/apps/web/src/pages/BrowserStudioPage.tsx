@@ -10,6 +10,7 @@ import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { StatusDot } from '../components/ui/StatusDot';
 import { toast } from '../components/ui/Toast';
+import { Modal } from '../components/ui/Modal';
 
 const STUN_URLS = import.meta.env.VITE_STUN_URLS || 'stun:stun.l.google.com:19302';
 const RESOLUTIONS = [
@@ -33,10 +34,13 @@ export function BrowserStudioPage() {
   const [cameraOn, setCameraOn] = useState(true);
   const [micOn, setMicOn] = useState(true);
   const [connecting, setConnecting] = useState(false);
+  const [previewReady, setPreviewReady] = useState(false);
+  const [previewError, setPreviewError] = useState('');
   const [devices, setDevices] = useState<{ cameras: MediaDeviceInfo[]; mics: MediaDeviceInfo[] }>({ cameras: [], mics: [] });
   const [selectedCamera, setSelectedCamera] = useState('');
   const [selectedMic, setSelectedMic] = useState('');
   const [resolution, setResolution] = useState(1); // 720p
+  const [showConfirmEnd, setShowConfirmEnd] = useState(false);
 
   const { data } = useQuery({
     queryKey: ['stream', id],
@@ -58,6 +62,8 @@ export function BrowserStudioPage() {
 
   // Start camera preview
   const startPreview = useCallback(async () => {
+    setPreviewReady(false);
+    setPreviewError('');
     try {
       const res = RESOLUTIONS[resolution];
       const ms = await navigator.mediaDevices.getUserMedia({
@@ -69,9 +75,14 @@ export function BrowserStudioPage() {
         videoRef.current.srcObject = ms;
         videoRef.current.play();
       }
+      setPreviewReady(true);
       startAudioMeter(ms);
     } catch (err) {
-      toast.error('Camera access denied. Please allow camera and microphone permissions.');
+      const msg = (err as Error).name === 'NotAllowedError'
+        ? 'Camera/microphone access denied. Please allow permissions in your browser settings.'
+        : 'Could not access camera or microphone. Check that they are connected and not in use by another app.';
+      setPreviewError(msg);
+      toast.error(msg);
     }
   }, [selectedCamera, selectedMic, resolution]);
 
@@ -119,13 +130,27 @@ export function BrowserStudioPage() {
     mutationFn: async () => {
       setConnecting(true);
 
-      // Validate that this stream was created as webrtc type
+      // Guard: camera/mic must be ready
+      if (!previewReady || !streamRef.current) {
+        throw new Error(
+          'Camera and microphone must be ready before going live. ' +
+          'Please allow camera/microphone access and wait for the preview to appear.'
+        );
+      }
+
+      // Guard: stream must be webrtc type
       if (stream?.ingestType !== 'webrtc') {
         throw new Error(
           `This stream uses RTMP ingest ("${stream?.ingestType}"). ` +
           'Browser Studio requires a stream created with ingest type "webrtc". ' +
           'Go back and create a new stream selecting "Browser Studio" as the source.'
         );
+      }
+
+      // Guard: must have at least one video track
+      const videoTracks = streamRef.current.getVideoTracks();
+      if (videoTracks.length === 0) {
+        throw new Error('No video track found. Please ensure your camera is connected and accessible.');
       }
 
       const pc = new RTCPeerConnection({
@@ -204,7 +229,7 @@ export function BrowserStudioPage() {
         <div style={{ flex: 1 }} />
         {isLive && <Badge variant="green" dot pulse>LIVE</Badge>}
         {isLive
-          ? <Button variant="danger" size="sm" icon={<Square size={14} />} loading={endMutation.isPending} onClick={() => { if (confirm('End stream?')) endMutation.mutate(); }} id="btn-studio-end">End Stream</Button>
+          ? <Button variant="danger" size="sm" icon={<Square size={14} />} loading={endMutation.isPending} onClick={() => setShowConfirmEnd(true)} id="btn-studio-end">End Stream</Button>
           : null
         }
       </div>
@@ -315,18 +340,30 @@ export function BrowserStudioPage() {
 
           {/* Go Live button */}
           {!isLive
-            ? <Button
-                fullWidth
-                variant="primary"
-                size="lg"
-                icon={connecting ? <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> : <Zap size={16} />}
-                loading={startMutation.isPending}
-                onClick={() => startMutation.mutate()}
-                id="btn-go-live"
-              >
-                {connecting ? 'Connecting…' : 'Go Live'}
-              </Button>
-            : <Button fullWidth variant="danger" size="lg" icon={<Square size={16} />} loading={endMutation.isPending} onClick={() => { if (confirm('End stream?')) endMutation.mutate(); }} id="btn-studio-end-bottom">
+            ? <>
+                {previewError && (
+                  <div style={{
+                    background: 'var(--color-red-bg)', border: '1px solid var(--color-red)',
+                    borderRadius: 'var(--radius-md)', padding: '10px 12px',
+                    fontSize: '13px', color: 'var(--color-red)', lineHeight: '1.4',
+                  }}>
+                    ⚠️ {previewError}
+                  </div>
+                )}
+                <Button
+                  fullWidth
+                  variant="primary"
+                  size="lg"
+                  icon={connecting ? <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> : <Zap size={16} />}
+                  loading={startMutation.isPending}
+                  disabled={!previewReady || !!previewError}
+                  onClick={() => startMutation.mutate()}
+                  id="btn-go-live"
+                >
+                  {connecting ? 'Connecting…' : previewReady ? 'Go Live' : 'Waiting for Camera…'}
+                </Button>
+              </>
+            : <Button fullWidth variant="danger" size="lg" icon={<Square size={16} />} loading={endMutation.isPending} onClick={() => setShowConfirmEnd(true)} id="btn-studio-end-bottom">
                 End Stream
               </Button>
           }
@@ -360,6 +397,23 @@ export function BrowserStudioPage() {
           {micOn ? <Mic size={18} /> : <MicOff size={18} />}
         </button>
       </div>
+
+      {/* End Stream Modal */}
+      <Modal
+        open={showConfirmEnd}
+        onClose={() => setShowConfirmEnd(false)}
+        title="End Livestream"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setShowConfirmEnd(false)}>Cancel</Button>
+            <Button variant="danger" loading={endMutation.isPending} onClick={() => { setShowConfirmEnd(false); endMutation.mutate(); }}>End Stream</Button>
+          </>
+        }
+      >
+        <p style={{ margin: 0, fontSize: '14px', color: 'var(--color-text-muted)', lineHeight: '1.5' }}>
+          Are you sure you want to end this livestream? This will disconnect all forwarders and complete your broadcasts on YouTube, Facebook, and Instagram.
+        </p>
+      </Modal>
     </div>
   );
 }

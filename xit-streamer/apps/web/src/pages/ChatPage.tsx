@@ -21,7 +21,7 @@ function timeAgo(dateStr: string): string {
 }
 
 export function ChatPage() {
-  const { chatMessages, addChatMessage, chatFilter, setChatFilter } = useStreamStore();
+  const { chatMessages, addChatMessage, chatFilter, setChatFilter, setActiveSession, setChatMessages } = useStreamStore();
   const chatRef = useRef<HTMLDivElement>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -42,19 +42,36 @@ export function ChatPage() {
     }
   }, [liveStreams, selectedSessionId]);
 
-  // Join socket room when session selected
+  // Set active session, fetch chat history, and join socket room when session selected
   useEffect(() => {
     if (!selectedSessionId) return;
+    setActiveSession(selectedSessionId);
+
+    // Fetch initial chat history
+    api.get(`/streams/${selectedSessionId}/chat?limit=100`)
+      .then((res: any) => {
+        if (res?.data) {
+          setChatMessages(res.data);
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to fetch chat history:', err);
+      });
+
     joinStreamRoom(selectedSessionId);
     const socket = getSocket();
-    socket.on('chat:message', (msg: Parameters<typeof addChatMessage>[0]) => {
+    const handleNewMessage = (msg: Parameters<typeof addChatMessage>[0]) => {
       addChatMessage(msg);
-    });
+    };
+
+    socket.on('chat:message', handleNewMessage);
+
     return () => {
       leaveStreamRoom(selectedSessionId);
-      socket.off('chat:message');
+      socket.off('chat:message', handleNewMessage);
+      setActiveSession(null);
     };
-  }, [selectedSessionId]);
+  }, [selectedSessionId, setActiveSession, setChatMessages, addChatMessage]);
 
   // Auto-scroll
   useEffect(() => {
