@@ -649,7 +649,7 @@ export class StreamsService {
         `${srsHttpApi}/rtc/v1/publish/`,
         {
           api: `${srsHttpApi}/rtc/v1/publish/`,
-          clientip: null,
+          clientip: '127.0.0.1',
           sdp: offer.sdp,
           streamurl: streamUrl,
           tid: `xit-${streamId.slice(0, 8)}`,

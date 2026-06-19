@@ -177,6 +177,56 @@ xit-streamer/
 
 ---
 
+## Major Module Explanations (File-by-File)
+
+### Backend API (`apps/api`)
+
+*   **[src/main.ts](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/api/src/main.ts)**: Application bootstrapper. Configures global prefixes, CORS policies, websocket adapters, global validation pipes, logging interceptors, and exception filters.
+*   **[src/app.module.ts](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/api/src/app.module.ts)**: Root module. Imports global Configuration and modules like TypeORM, Schedule (cron scheduler), Auth, Connections, Streams, Chat, Webhooks, and Health.
+*   **[src/config/configuration.ts](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/api/src/config/configuration.ts)**: Maps environment variables (from `.env` or system variables) to a structured, type-safe configuration tree.
+*   **[src/auth/auth.controller.ts](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/api/src/auth/auth.controller.ts)**: Handles redirection endpoints for YouTube, Facebook, and Instagram OAuth flows, as well as callback paths, token refreshes, and `/me` user profile queries.
+*   **[src/auth/auth.service.ts](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/api/src/auth/auth.service.ts)**: Orchestrates token requests from oauth providers, user creation/updates in the DB, credential encryption (via CryptoService), and JWT generation.
+*   **[src/chat/chat.gateway.ts](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/api/src/chat/chat.gateway.ts)**: Socket.IO gateway. Handles room subscription joins/leaves (`stream:join`, `stream:leave`) and broadcasts real-time chat comments and stream metrics.
+*   **[src/chat/chat.service.ts](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/api/src/chat/chat.service.ts)**: Saves incoming comments to the database (with duplicate checks based on platform + externalId) and broadcasts them to active clients.
+*   **[src/chat/aggregators/youtube.aggregator.ts](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/api/src/chat/aggregators/youtube.aggregator.ts)**: Active poller for YouTube live chat. Polls the `liveChatMessages` API and triggers automatic token refreshes inline if the access token expires.
+*   **[src/chat/aggregators/facebook.aggregator.ts](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/api/src/chat/aggregators/facebook.aggregator.ts)**: Active poller for Facebook Page comments via Graph API comments nodes, and a webhook endpoint listener.
+*   **[src/chat/aggregators/instagram.aggregator.ts](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/api/src/chat/aggregators/instagram.aggregator.ts)**: Handlers for webhook-delivered Instagram live comments. Simulated pollers for mock connections are supported.
+*   **[src/internal/internal.controller.ts](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/api/src/internal/internal.controller.ts)**: Exposes `/on-publish` and `/on-unpublish` hooks triggered by the SRS media server. It also accepts stream metrics from the Media Engine to update stream states to `live` and start chat pollers.
+*   **[src/media/media.client.ts](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/api/src/media/media.client.ts)**: REST client library for triggering startup and shutdown actions on the FastAPI Media Engine.
+*   **[src/platforms/youtube-api.service.ts](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/api/src/platforms/youtube-api.service.ts)**: YouTube Data API v3 provider. Creates broadcasts, creates ingest streams, binds them, and transitions state to LIVE.
+*   **[src/platforms/facebook-api.service.ts](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/api/src/platforms/facebook-api.service.ts)**: Facebook Graph API provider. Handles page listing, creating Facebook Live Video nodes, and creating Instagram live streams.
+*   **[src/streams/streams.controller.ts](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/api/src/streams/streams.controller.ts)**: Declares endpoints for stream CRUD, starting, ending, and handling Browser Studio WebRTC negotiations.
+*   **[src/streams/streams.service.ts](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/api/src/streams/streams.service.ts)**: Stream state machine engine. Drives transitions, coordinates platform live session creation, refreshes YouTube tokens on start, WebRTC renegotiations, and proxies offers to SRS.
+*   **[src/webhooks/webhooks.controller.ts](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/api/src/webhooks/webhooks.controller.ts)**: Receives Meta webhook validation handshakes (`hub.challenge`) and routes real-time Facebook Page and Instagram live comments to their respective aggregators.
+
+### React Web Frontend (`apps/web`)
+
+*   **[src/main.tsx](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/web/src/main.tsx)**: Bootstraps the React SPA, attaching styling sheets.
+*   **[src/App.tsx](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/web/src/App.tsx)**: Declares client-side React Router routing paths.
+*   **[src/lib/api.ts](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/web/src/lib/api.ts)**: Axios client configured with automatic request/response interceptors to attach JWT headers and perform automatic token refresh retries on `401 Unauthorized` responses.
+*   **[src/lib/socket.ts](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/web/src/lib/socket.ts)**: Instantiates and exposes the global Socket.IO connection.
+*   **[src/design-system/tokens.css](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/web/src/design-system/tokens.css)**: Design system parameters detailing light and dark HSL colors, fonts, spacing, shadows, and base styling variables.
+*   **[src/stores/auth.store.ts](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/web/src/stores/auth.store.ts)**: Zustand persistent auth state storing active user profile details and session JWTs.
+*   **[src/stores/stream.store.ts](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/web/src/stores/stream.store.ts)**: Zustand stream state capturing active session metadata, stream health telemetry gauges, and scrolling chat messages.
+*   **[src/pages/BrowserStudioPage.tsx](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/web/src/pages/BrowserStudioPage.tsx)**: Browser-based studio. Accesses media devices, shows camera preview, negotiates WebRTC SDP offer-answer handshakes, and streams live to SRS.
+*   **[src/pages/StreamDetailPage.tsx](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/web/src/pages/StreamDetailPage.tsx)**: Stream control room. View RTMP endpoints, stream keys, monitor live telemetry gauges (bitrate, fps, dropped frames), and start/stop streams.
+*   **[src/pages/ChatPage.tsx](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/web/src/pages/ChatPage.tsx)**: Normalized scrollable chat feed aggregating comments from YouTube, Facebook, and Instagram.
+*   **[src/pages/ConnectionsPage.tsx](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/apps/web/src/pages/ConnectionsPage.tsx)**: Account manager grid linking YouTube, Facebook Pages, and Instagram accounts.
+
+### Python Media Engine (`services/media-engine`)
+
+*   **[main.py](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/services/media-engine/main.py)**: FastAPI entry point running on Uvicorn. Exposes routers for metrics and process control.
+*   **[services/ffmpeg_manager.py](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/services/media-engine/services/ffmpeg_manager.py)**: Spawns and manages FFmpeg subprocesses. Monitors exits and executes exponential retry restarts on crash.
+*   **[services/stream_forwarder.py](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/services/media-engine/services/stream_forwarder.py)**: Generates exact FFmpeg commands: copies raw H.264/AAC packets for RTMP, or transcodes WebRTC VP8/Opus into RTMP-friendly formats.
+*   **[services/health_reporter.py](file:///Users/shaikmohammedjabirhussain/Desktop/XIT_STREAMER/xit-streamer/services/media-engine/services/health_reporter.py)**: Parsers FFmpeg's stderr output line-by-line using regular expressions to extract metrics and posts them to the API.
+
+---
+
+## Local Development Setup
+
+
+---
+
 ## Local Development Setup
 
 ### Prerequisites

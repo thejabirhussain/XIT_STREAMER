@@ -2,10 +2,12 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import axios from 'axios';
+import { ConfigService } from '@nestjs/config';
 import { PlatformConnection } from '../../entities/platform-connection.entity';
 import { LivestreamSession } from '../../entities/livestream-session.entity';
 import { ChatService } from '../chat.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
+import { YouTubeApiService } from '../../platforms/youtube-api.service';
 
 /**
  * YouTube Live Chat aggregator.
@@ -24,6 +26,8 @@ export class YouTubeAggregator {
     private readonly sessionRepo: Repository<LivestreamSession>,
     private readonly chatService: ChatService,
     private readonly cryptoService: CryptoService,
+    private readonly configService: ConfigService,
+    private readonly youTubeApiService: YouTubeApiService,
   ) {}
 
   /**
@@ -47,8 +51,34 @@ export class YouTubeAggregator {
           return;
         }
 
-        const accessToken = this.cryptoService.decrypt(connection.encryptedAccessToken);
+        let accessToken = this.cryptoService.decrypt(connection.encryptedAccessToken);
         const isMock = accessToken.startsWith('mock_') || connection.accountId?.includes('mock_');
+
+        if (!isMock && connection.tokenExpiresAt) {
+          const expiresAt = new Date(connection.tokenExpiresAt);
+          const fiveMinFromNow = new Date(Date.now() + 5 * 60 * 1000);
+          if (expiresAt < fiveMinFromNow && connection.encryptedRefreshToken) {
+            this.logger.log(`YouTube token expiring soon/expired for aggregator poll, refreshing...`);
+            try {
+              const refreshToken = this.cryptoService.decrypt(connection.encryptedRefreshToken);
+              const clientId = this.configService.get<string>('youtube.clientId', '');
+              const clientSecret = this.configService.get<string>('youtube.clientSecret', '');
+              const refreshed = await this.youTubeApiService.refreshAccessToken(refreshToken, clientId, clientSecret);
+              if (refreshed) {
+                accessToken = refreshed.accessToken;
+                const newEncrypted = this.cryptoService.encrypt(refreshed.accessToken);
+                await this.connectionRepo.update(connection.id, {
+                  encryptedAccessToken: newEncrypted,
+                  tokenExpiresAt: new Date(Date.now() + refreshed.expiresIn * 1000),
+                  lastSyncedAt: new Date(),
+                });
+                this.logger.log(`YouTube token refreshed successfully for aggregator poll`);
+              }
+            } catch (e) {
+              this.logger.warn(`Token refresh in YouTube aggregator failed: ${e instanceof Error ? e.message : 'Unknown'}`);
+            }
+          }
+        }
 
         if (isMock) {
           const mockMessages = [
@@ -88,6 +118,7 @@ export class YouTubeAggregator {
           this.activePollers.set(sessionId, timer);
           return;
         }
+
 
         const params: Record<string, string> = {
           liveChatId,

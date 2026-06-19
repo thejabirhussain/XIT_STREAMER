@@ -45,41 +45,65 @@ class HealthReporter:
         self._running = False
 
     async def _parse_stderr(self) -> None:
-        """Parse FFmpeg stderr line-by-line for metrics."""
+        """Parse FFmpeg stderr line-by-line and carriage-return for metrics."""
         if not self.process.stderr:
             return
 
         loop = asyncio.get_event_loop()
+        buffer = ""
 
         while self._running and self.process.poll() is None:
             try:
-                line = await loop.run_in_executor(
-                    None, self.process.stderr.readline
+                # Read a chunk of bytes from stderr
+                chunk = await loop.run_in_executor(
+                    None, self.process.stderr.read1, 1024
                 )
-
-                if not line:
+                if not chunk:
                     break
 
-                decoded = line.decode("utf-8", errors="ignore").strip()
+                buffer += chunk.decode("utf-8", errors="ignore")
 
-                # Parse bitrate: "bitrate=4500.2kbits/s" or "bitrate= 4500kbits/s"
-                bitrate_match = re.search(r"bitrate=\s*([\d.]+)kbits/s", decoded)
-                if bitrate_match:
-                    self.bitrate_kbps = int(float(bitrate_match.group(1)))
-                    if self.bitrate_kbps > 0:
-                        self.last_progress_at = time.time()
+                # Extract and process lines separated by \n or \r
+                while True:
+                    r_idx = buffer.find('\r')
+                    n_idx = buffer.find('\n')
 
-                # Parse fps: "fps= 30" or "fps=29.97"
-                fps_match = re.search(r"fps=\s*([\d.]+)", decoded)
-                if fps_match:
-                    self.fps = float(fps_match.group(1))
-                    if self.fps > 0:
-                        self.last_progress_at = time.time()
+                    if r_idx == -1 and n_idx == -1:
+                        break
 
-                # Parse dropped frames: "drop= 5" or "dup= 3"
-                drop_match = re.search(r"drop=\s*(\d+)", decoded)
-                if drop_match:
-                    self.dropped_frames = int(drop_match.group(1))
+                    # Choose the earlier delimiter
+                    if r_idx != -1 and (n_idx == -1 or r_idx < n_idx):
+                        idx = r_idx
+                    else:
+                        idx = n_idx
+
+                    line = buffer[:idx].strip()
+                    buffer = buffer[idx + 1:]
+
+                    if not line:
+                        continue
+
+                    decoded = line
+                    logger.info(f"[{self.session_id}] {decoded}")
+
+                    # Parse bitrate: "bitrate=4500.2kbits/s" or "bitrate= 4500kbits/s"
+                    bitrate_match = re.search(r"bitrate=\s*([\d.]+)kbits/s", decoded)
+                    if bitrate_match:
+                        self.bitrate_kbps = int(float(bitrate_match.group(1)))
+                        if self.bitrate_kbps > 0:
+                            self.last_progress_at = time.time()
+
+                    # Parse fps: "fps= 30" or "fps=29.97"
+                    fps_match = re.search(r"fps=\s*([\d.]+)", decoded)
+                    if fps_match:
+                        self.fps = float(fps_match.group(1))
+                        if self.fps > 0:
+                            self.last_progress_at = time.time()
+
+                    # Parse dropped frames: "drop= 5" or "dup= 3"
+                    drop_match = re.search(r"drop=\s*(\d+)", decoded)
+                    if drop_match:
+                        self.dropped_frames = int(drop_match.group(1))
 
             except Exception as e:
                 if self._running:

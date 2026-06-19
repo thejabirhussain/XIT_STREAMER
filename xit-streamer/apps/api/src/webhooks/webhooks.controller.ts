@@ -12,14 +12,25 @@ import {
   Req,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { createHmac } from 'crypto';
 import { Request } from 'express';
+import { LivestreamSession } from '../entities/livestream-session.entity';
+import { FacebookAggregator } from '../chat/aggregators/facebook.aggregator';
+import { InstagramAggregator } from '../chat/aggregators/instagram.aggregator';
 
 @Controller('webhooks')
 export class WebhooksController {
   private readonly logger = new Logger(WebhooksController.name);
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly configService: ConfigService,
+    @InjectRepository(LivestreamSession)
+    private readonly sessionRepo: Repository<LivestreamSession>,
+    private readonly facebookAggregator: FacebookAggregator,
+    private readonly instagramAggregator: InstagramAggregator,
+  ) {}
 
   /**
    * GET /api/webhooks/meta
@@ -78,13 +89,45 @@ export class WebhooksController {
       const changes = (entry.changes as Array<Record<string, unknown>>) || [];
       for (const change of changes) {
         const field = change.field as string;
-        const value = change.value as Record<string, unknown>;
+        const value = change.value as Record<string, any>;
 
         this.logger.log(`Meta webhook event: ${object}.${field}`);
 
         if (field === 'live_comments') {
-          // Route to Facebook or Instagram aggregator
           this.logger.log(`Live comment received: ${JSON.stringify(value)}`);
+          
+          const liveVideoId = value.live_video_id;
+          if (!liveVideoId) continue;
+
+          if (object === 'page') {
+            // Facebook Page comment
+            const session = await this.sessionRepo.findOne({ where: { facebookLiveId: liveVideoId } });
+            if (session) {
+              await this.facebookAggregator.handleWebhookComment(session.id, {
+                id: value.id || value.comment_id,
+                message: value.message,
+                from: value.from || { id: '', name: 'Unknown' },
+                created_time: value.created_time,
+              });
+              this.logger.log(`Routed Facebook Page comment to session ${session.id}`);
+            } else {
+              this.logger.warn(`No session found for Facebook liveVideoId ${liveVideoId}`);
+            }
+          } else if (object === 'instagram') {
+            // Instagram live comment
+            const session = await this.sessionRepo.findOne({ where: { instagramLiveId: liveVideoId } });
+            if (session) {
+              await this.instagramAggregator.handleWebhookComment(session.id, {
+                id: value.id || value.comment_id,
+                text: value.text || value.message,
+                from: value.from || { id: '', username: 'Unknown' },
+                timestamp: value.timestamp || value.created_time,
+              });
+              this.logger.log(`Routed Instagram comment to session ${session.id}`);
+            } else {
+              this.logger.warn(`No session found for Instagram liveVideoId ${liveVideoId}`);
+            }
+          }
         }
       }
     }
@@ -92,3 +135,4 @@ export class WebhooksController {
     return 'EVENT_RECEIVED';
   }
 }
+

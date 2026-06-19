@@ -15,6 +15,10 @@
   --color-text-muted:   #6B6B7E;
   --color-text-subtle:  #4A4A5A;
 
+  --color-nav-bg:          rgba(10, 10, 15, 0.85);
+  --color-hero-grad-start: #E8E8F0;
+  --color-hero-grad-end:   #6B6B7E;
+
   --color-accent:       #6C63FF;
   --color-accent-dark:  #5A52E0;
   --color-accent-light: #8B85FF;
@@ -114,6 +118,10 @@
   --color-text:         #111118;
   --color-text-muted:   #5C5C6E;
   --color-text-subtle:  #8E8E9E;
+
+  --color-nav-bg:          rgba(255, 255, 255, 0.85);
+  --color-hero-grad-start: #111118;
+  --color-hero-grad-end:   #5C5C6E;
 
   --color-accent:       #6C63FF;
   --color-accent-dark:  #5A52E0;

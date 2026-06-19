@@ -155,6 +155,7 @@ export function BrowserStudioPage() {
 
       const pc = new RTCPeerConnection({
         iceServers: [{ urls: STUN_URLS.split(',') }],
+        bundlePolicy: 'max-bundle',
       });
       pcRef.current = pc;
 

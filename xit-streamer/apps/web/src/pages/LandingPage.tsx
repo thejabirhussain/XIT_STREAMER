@@ -41,7 +41,7 @@ export function LandingPage() {
       {/* Nav */}
       <nav style={{
         position: 'sticky', top: 0, zIndex: 50,
-        background: 'rgba(10,10,15,0.85)', backdropFilter: 'blur(12px)',
+        background: 'var(--color-nav-bg)', backdropFilter: 'blur(12px)',
         borderBottom: '1px solid var(--color-border)',
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '0 var(--space-8)', height: '60px',
@@ -93,7 +93,7 @@ export function LandingPage() {
           letterSpacing: '-0.04em',
           lineHeight: 1.05,
           maxWidth: '820px',
-          background: 'linear-gradient(135deg, #E8E8F0 0%, #6B6B7E 100%)',
+          background: 'linear-gradient(135deg, var(--color-hero-grad-start) 0%, var(--color-hero-grad-end) 100%)',
           WebkitBackgroundClip: 'text',
           WebkitTextFillColor: 'transparent',
           margin: 0,
