@@ -652,7 +652,9 @@ export class StreamsService {
     const srsHttpApi = this.configService.get<string>('media.srsHttpApi', 'http://localhost:1985');
     const streamUrl = `webrtc://localhost/live/${session.streamKey}`;
 
-    this.logger.log(`WebRTC offer received for stream ${streamId} — proxying to SRS`);
+    // Log first codec line so we can confirm H264 is being offered
+    const firstCodecLine = offer.sdp.split('\n').find((l) => l.startsWith('a=rtpmap:'));
+    this.logger.log(`WebRTC offer received for stream ${streamId} — first codec: ${firstCodecLine?.trim() ?? 'none'}`);
 
     try {
       const srsResponse = await axios.post(
