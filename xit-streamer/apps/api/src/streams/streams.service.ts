@@ -30,7 +30,7 @@ import { InstagramAggregator } from '../chat/aggregators/instagram.aggregator';
 const VALID_TRANSITIONS: Record<StreamStatus, StreamStatus[]> = {
   created: ['scheduled', 'broadcast_starting'],
   scheduled: ['broadcast_starting'],
-  broadcast_starting: ['live', 'error'],
+  broadcast_starting: ['live', 'error', 'completed'],
   live: ['ending', 'error'],
   ending: ['completed', 'error'],
   completed: [],
@@ -482,8 +482,8 @@ export class StreamsService {
   async endStream(userId: string, streamId: string): Promise<LivestreamSession> {
     const session = await this.getStream(userId, streamId);
 
-    // Allow stopping from live OR broadcast_starting (stuck streams)
-    if (!['live', 'broadcast_starting'].includes(session.status)) {
+    // Allow stopping from live, broadcast_starting, or ending (idempotent)
+    if (!['live', 'broadcast_starting', 'ending'].includes(session.status)) {
       throw new BadRequestException(
         `Cannot end stream in "${session.status}" state. Stream must be "live" or "broadcast_starting".`,
       );
@@ -529,7 +529,14 @@ export class StreamsService {
       }
     }
 
-    return this.transitionStatus(streamId, 'ending');
+    // Streams in broadcast_starting can be cancelled directly to completed
+    if (session.status === 'broadcast_starting') {
+      return this.transitionStatus(streamId, 'completed');
+    }
+
+    // live → ending → completed
+    await this.transitionStatus(streamId, 'ending');
+    return this.transitionStatus(streamId, 'completed');
   }
 
   /**

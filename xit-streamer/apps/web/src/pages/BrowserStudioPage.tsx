@@ -161,6 +161,25 @@ export function BrowserStudioPage() {
 
       streamRef.current?.getTracks().forEach((t) => pc.addTrack(t, streamRef.current!));
 
+      // SRS only accepts H264 for WebRTC — restrict video codec to H264+RTX before
+      // creating the offer so Chrome doesn't negotiate VP8/VP9/AV1 first.
+      // RTX (retransmission) must be included alongside H264 so Chrome includes
+      // SSRC FID groups in the SDP, which SRS requires to generate a full answer.
+      const videoTransceiver = pc.getTransceivers().find(
+        (t) => t.sender.track?.kind === 'video',
+      );
+      if (videoTransceiver) {
+        const caps = RTCRtpSender.getCapabilities('video');
+        if (caps) {
+          const h264AndRtx = caps.codecs.filter(
+            (c) => ['video/h264', 'video/rtx'].includes(c.mimeType.toLowerCase()),
+          );
+          if (h264AndRtx.length > 0) {
+            videoTransceiver.setCodecPreferences(h264AndRtx);
+          }
+        }
+      }
+
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
