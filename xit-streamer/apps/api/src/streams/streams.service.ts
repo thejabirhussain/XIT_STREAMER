@@ -103,7 +103,7 @@ export class StreamsService {
     // Create stream destinations for connected platforms
     if (dto.platforms && dto.platforms.length > 0) {
       const connections = await this.connectionRepo.find({
-        where: { userId },
+        where: { userId, connectionStatus: 'connected' },
       });
 
       for (const platform of dto.platforms) {
@@ -225,7 +225,7 @@ export class StreamsService {
     }
 
     // Get all connected platform connections for this user
-    const connections = await this.connectionRepo.find({ where: { userId } });
+    const connections = await this.connectionRepo.find({ where: { userId, connectionStatus: 'connected' } });
 
     // Get or create destinations for all connected platforms
     let destinations = await this.destRepo.find({
