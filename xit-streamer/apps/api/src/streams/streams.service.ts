@@ -393,8 +393,8 @@ export class StreamsService {
 
           this.logger.log(`Facebook: liveVideoId=${result.liveVideoId}`);
         } else {
-          await this.destRepo.update(dest.id, { status: 'error', errorMessage: 'Failed to create Facebook Live Video. Check page permissions.' });
-          this.logger.error(`Failed to create Facebook live video for stream ${streamId}`);
+          await this.destRepo.update(dest.id, { status: 'error', errorMessage: 'Failed to create Facebook Live Video. Ensure your account has live video permissions or connect a Facebook Page.' });
+          this.logger.error(`Failed to create Facebook live video for stream ${streamId} (accountId: ${dest.connection.accountId})`);
         }
 
       } else if (dest.platform === 'instagram') {
@@ -449,7 +449,10 @@ export class StreamsService {
 
     if (destInfo.length === 0) {
       throw new BadRequestException(
-        'No streaming destination could be started. Reconnect a platform and check its live-stream permissions.',
+        'No streaming destination could be started. ' +
+        'For YouTube: ensure your account is connected and has live streaming enabled. ' +
+        'For Facebook: a Facebook Page is required (personal profiles may not support live API access). ' +
+        'Connect at least one platform under Settings → Connections.',
       );
     }
 
