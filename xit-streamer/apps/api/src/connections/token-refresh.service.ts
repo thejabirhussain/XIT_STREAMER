@@ -22,7 +22,7 @@ export class TokenRefreshService {
    * Refresh YouTube OAuth tokens every 30 minutes.
    * Targets connections where token expires within 10 minutes.
    */
-  @Cron(CronExpression.EVERY_30_MINUTES)
+  @Cron(CronExpression.EVERY_10_MINUTES)
   async refreshYouTubeTokens(): Promise<void> {
     const tenMinutesFromNow = new Date(Date.now() + 10 * 60 * 1000);
 
