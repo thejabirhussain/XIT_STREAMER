@@ -157,7 +157,7 @@ export class AuthService {
       'pages_manage_posts',
       'instagram_basic',
       'instagram_content_publish',
-      'live_video',
+      'publish_video',
       'pages_read_user_content',
       'public_profile',
       'email',
