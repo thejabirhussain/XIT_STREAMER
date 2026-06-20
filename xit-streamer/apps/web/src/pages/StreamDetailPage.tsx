@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Activity, Clock, Wifi, Monitor, Square, RefreshCw, Copy, Eye, EyeOff } from 'lucide-react';
+import { ArrowLeft, Activity, Clock, Wifi, Monitor, Square, RefreshCw, Copy, Eye, EyeOff, Key, ExternalLink, CheckCircle } from 'lucide-react';
 import { api } from '../lib/api';
 import { getSocket, joinStreamRoom, leaveStreamRoom } from '../lib/socket';
 import { useStreamStore } from '../stores/stream.store';
@@ -45,6 +45,206 @@ function CopyableField({ label, value, mask = false }: { label: string; value: s
     </div>
   );
 }
+
+// ─── Instagram Live Producer Credential Panel ──────────────────────────────
+
+type Destination = { platform: string; status: string; rtmpUrl?: string; streamKey?: string; errorMessage?: string };
+
+function InstagramCredentialForm({ streamId, dest, streamStatus, onSaved }: {
+  streamId: string;
+  dest?: Destination;
+  streamStatus: string;
+  onSaved: () => void;
+}) {
+  const [rtmpsUrl, setRtmpsUrl] = useState(dest?.rtmpUrl || '');
+  const [streamKey, setStreamKey] = useState(dest?.streamKey || '');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const isLocked = ['live', 'ending', 'completed'].includes(streamStatus);
+
+  const handleSave = async () => {
+    if (!rtmpsUrl.trim() || !streamKey.trim()) { toast.error('Both fields are required.'); return; }
+    setSaving(true);
+    try {
+      await api.put(`/streams/${streamId}/instagram-credentials`, { rtmpsUrl: rtmpsUrl.trim(), streamKey: streamKey.trim() });
+      setSaved(true);
+      onSaved();
+      toast.success('Instagram credentials saved.');
+    } catch (e: unknown) {
+      toast.error((e as { message?: string }).message || 'Failed to save credentials.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const credentialsSet = dest?.rtmpUrl && dest?.streamKey;
+  const isActive = dest?.status === 'active';
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+      {/* Status row */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="var(--color-accent)">
+            <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
+          </svg>
+          <span style={{ fontSize: '14px', fontWeight: 600 }}>Instagram</span>
+        </div>
+        <StatusDot
+          status={isActive ? 'live' : credentialsSet && !saved ? 'connected' : 'pending'}
+          label={isActive ? 'Live' : credentialsSet ? 'Ready' : 'Setup Required'}
+        />
+      </div>
+
+      {isActive ? (
+        <div style={{ fontSize: '12px', color: 'var(--color-green)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <CheckCircle size={13} /> Streaming to Instagram Live
+        </div>
+      ) : (
+        <>
+          {/* Instructions */}
+          <div style={{
+            background: 'rgba(108,99,255,0.06)', border: '1px solid rgba(108,99,255,0.2)',
+            borderRadius: 'var(--radius-md)', padding: 'var(--space-3)',
+            fontSize: '12px', lineHeight: '1.5', color: 'var(--color-text-muted)',
+          }}>
+            <div style={{ fontWeight: 600, color: 'var(--color-text)', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+              <Key size={12} /> Instagram Live Producer
+            </div>
+            <ol style={{ margin: '0', paddingLeft: '16px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <li>Open <a href="https://www.instagram.com" target="_blank" rel="noreferrer" style={{ color: 'var(--color-accent)' }}>instagram.com</a> <ExternalLink size={10} style={{ verticalAlign: 'middle' }} /></li>
+              <li>Click <strong>+ Create → Live</strong></li>
+              <li>Add a title → click <strong>Next</strong></li>
+              <li>Copy your <strong>Stream URL</strong> and <strong>Stream Key</strong></li>
+              <li>Paste them below, then start the stream here</li>
+            </ol>
+          </div>
+
+          {/* Inputs */}
+          {!isLocked && (
+            <>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <label style={{ fontSize: '11px', color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Stream URL (RTMPS)
+                </label>
+                <input
+                  type="text"
+                  value={rtmpsUrl}
+                  onChange={(e) => { setRtmpsUrl(e.target.value); setSaved(false); }}
+                  placeholder="rtmps://live-upload.instagram.com:443/rtmp/"
+                  style={{
+                    width: '100%', boxSizing: 'border-box',
+                    background: 'var(--color-surface-2)', border: '1px solid var(--color-border)',
+                    borderRadius: 'var(--radius-md)', padding: '7px 10px',
+                    fontSize: '12px', fontFamily: 'var(--font-mono)', color: 'var(--color-text)',
+                    outline: 'none',
+                  }}
+                />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <label style={{ fontSize: '11px', color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Stream Key
+                </label>
+                <input
+                  type="password"
+                  value={streamKey}
+                  onChange={(e) => { setStreamKey(e.target.value); setSaved(false); }}
+                  placeholder="live_XXXXXXXXXXXXXX"
+                  style={{
+                    width: '100%', boxSizing: 'border-box',
+                    background: 'var(--color-surface-2)', border: '1px solid var(--color-border)',
+                    borderRadius: 'var(--radius-md)', padding: '7px 10px',
+                    fontSize: '12px', fontFamily: 'var(--font-mono)', color: 'var(--color-text)',
+                    outline: 'none',
+                  }}
+                />
+              </div>
+              <Button
+                variant={saved ? 'secondary' : 'primary'}
+                size="sm"
+                fullWidth
+                loading={saving}
+                onClick={handleSave}
+                disabled={saved || (!rtmpsUrl.trim() && !streamKey.trim())}
+              >
+                {saved ? '✓ Saved' : 'Save Credentials'}
+              </Button>
+              {dest?.errorMessage && (
+                <div style={{ fontSize: '11px', color: 'var(--color-red)', lineHeight: '1.4' }}>
+                  {dest.errorMessage}
+                </div>
+              )}
+              <div style={{ fontSize: '11px', color: 'var(--color-text-muted)', lineHeight: '1.4' }}>
+                Stream keys expire after each session. You must obtain a new key from Instagram before every stream.
+              </div>
+            </>
+          )}
+          {isLocked && (
+            <div style={{ fontSize: '12px', color: 'var(--color-text-muted)' }}>
+              {credentialsSet ? 'Credentials were set for this session.' : 'Stream is in a locked state — credentials cannot be updated.'}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function DestinationsPanel({ streamId, destinations, streamStatus }: {
+  streamId: string;
+  destinations: Destination[];
+  streamStatus: string;
+}) {
+  const qc = useQueryClient();
+  const igDest = destinations.find((d) => d.platform === 'instagram');
+  const otherDests = destinations.filter((d) => d.platform !== 'instagram');
+
+  return (
+    <div style={{ padding: 'var(--space-5)', display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', overflowY: 'auto', borderLeft: '1px solid var(--color-border)' }}>
+      <h2 style={{ fontSize: '13px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--color-text-muted)', margin: 0 }}>
+        Destinations
+      </h2>
+
+      {/* YouTube / Facebook — simple status cards */}
+      {otherDests.map((d) => (
+        <Card key={d.platform} padding="var(--space-4)">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--color-text)', textTransform: 'capitalize' }}>{d.platform}</span>
+            <StatusDot
+              status={d.status === 'active' ? 'live' : d.status === 'error' ? 'error' : 'pending'}
+              label={d.status}
+            />
+          </div>
+          {d.status === 'error' && d.errorMessage && (
+            <div style={{ marginTop: '8px', fontSize: '11px', color: 'var(--color-red)', lineHeight: '1.4' }}>
+              {d.errorMessage}
+            </div>
+          )}
+        </Card>
+      ))}
+
+      {/* Instagram — first-class credential panel */}
+      {igDest && (
+        <Card padding="var(--space-4)">
+          <InstagramCredentialForm
+            streamId={streamId}
+            dest={igDest}
+            streamStatus={streamStatus}
+            onSaved={() => qc.invalidateQueries({ queryKey: ['stream', streamId] })}
+          />
+        </Card>
+      )}
+
+      {destinations.length === 0 && (
+        <p style={{ fontSize: '13px', color: 'var(--color-text-muted)', margin: 0 }}>
+          No destinations configured. Connect platforms under Settings → Connections.
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ─── Stream Detail Page ────────────────────────────────────────────────────
 
 export function StreamDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -312,22 +512,7 @@ export function StreamDetailPage() {
         </div>
 
         {/* Right: Destinations */}
-        <div style={{ padding: 'var(--space-5)', display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', overflowY: 'auto' }}>
-          <h2 style={{ fontSize: '13px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--color-text-muted)', margin: 0 }}>Destinations</h2>
-          {(s.destinations || []).map((d) => (
-            <Card key={d.platform} padding="var(--space-4)">
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--color-text)', textTransform: 'capitalize' }}>{d.platform}</span>
-                <StatusDot status={d.status === 'active' ? 'live' : d.status === 'error' ? 'error' : 'pending'} label={d.status} />
-              </div>
-            </Card>
-          ))}
-          {(s.destinations || []).length === 0 && (
-            <p style={{ fontSize: '13px', color: 'var(--color-text-muted)', margin: 0 }}>
-              No destinations configured. Connect platforms first.
-            </p>
-          )}
-        </div>
+        <DestinationsPanel streamId={s.id} destinations={s.destinations || []} streamStatus={s.status} />
       </div>
 
       {/* End Stream Modal */}

@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Patch,
   Param,
   Body,
@@ -123,6 +124,22 @@ export class StreamsController {
     @Query('platform') platform?: string,
   ) {
     return this.streamsService.getChatHistory(id, page || 1, limit || 50, platform);
+  }
+
+  /**
+   * PUT /api/streams/:id/instagram-credentials
+   * Save the Instagram Live Producer RTMPS URL and stream key before going live.
+   * The user copies these from instagram.com → Create → Live each session.
+   */
+  @Put(':id/instagram-credentials')
+  @HttpCode(HttpStatus.OK)
+  async saveInstagramCredentials(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body('rtmpsUrl') rtmpsUrl: string,
+    @Body('streamKey') streamKey: string,
+  ) {
+    return this.streamsService.saveInstagramCredentials(user.sub, id, rtmpsUrl, streamKey);
   }
 
   /**

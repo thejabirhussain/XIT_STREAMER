@@ -257,16 +257,21 @@ export class InternalController {
                 })();
               }
 
-              // Handle Instagram — start chat polling if instagramLiveId available
-              const igDest = destinations.find((d) => d.platform === 'instagram');
+              // Handle Instagram — start comment polling when the destination is active.
+              // Unlike YouTube/Facebook, we do NOT pre-obtain a live video ID from
+              // the Graph API. The aggregator discovers it by polling /{accountId}/live_media.
+              const igDest = destinations.find(
+                (d) => d.platform === 'instagram' && d.status === 'active',
+              );
               const igConn = igDest?.connection;
-              if (igConn && reloaded.instagramLiveId) {
+              if (igConn) {
                 (async () => {
                   try {
-                    this.logger.log(`Starting Instagram chat polling for session ${sessionId}`);
-                    await this.instagramAggregator.startPolling(sessionId, reloaded.instagramLiveId, igConn.id);
+                    this.logger.log(`Starting Instagram comment polling for session ${sessionId}`);
+                    // Pass empty string for liveVideoId — aggregator discovers it via Graph API
+                    await this.instagramAggregator.startPolling(sessionId, '', igConn.id);
                   } catch (err) {
-                    this.logger.error(`Instagram chat polling startup failed for session ${sessionId}: ${err}`);
+                    this.logger.error(`Instagram comment polling startup failed for session ${sessionId}: ${err}`);
                   }
                 })();
               }

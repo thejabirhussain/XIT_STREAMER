@@ -45,6 +45,11 @@ def build_ffmpeg_command(
             else:
                 logger.warning(f"Unknown platform: {platform}, skipping")
                 continue
+        elif platform == "instagram" and dest_stream_key and not rtmp_url.rstrip("/").endswith(dest_stream_key.split("?")[0]):
+            # Instagram saves URL and stream key separately in the UI.
+            # The full output URL must be URL + stream_key combined.
+            rtmp_url = rtmp_url.rstrip("/") + "/" + dest_stream_key
+            logger.info(f"Instagram: combined RTMPS URL with stream key → {rtmp_url[:60]}...")
 
         if ingest_type == "webrtc":
             # WebRTC → transcode to H.264 + AAC (browser sends VP8/Opus via WebRTC)

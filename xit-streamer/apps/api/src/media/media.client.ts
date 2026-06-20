@@ -29,7 +29,7 @@ export class MediaClient {
     ingestType: string;
     destinations: Array<{
       platform: string;
-      connectionId: string;
+      connectionId: string | null;
       accessToken: string;
       rtmpUrl?: string;
       streamKey?: string;

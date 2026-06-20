@@ -252,7 +252,7 @@ export class StreamsService {
     }
 
     // For each destination, call the platform API to get a real stream key
-    const destInfo: Array<{ platform: string; connectionId: string; accessToken: string; rtmpUrl?: string; streamKey?: string }> = [];
+    const destInfo: Array<{ platform: string; connectionId: string | null; accessToken: string; rtmpUrl?: string; streamKey?: string }> = [];
 
     for (const dest of destinations) {
       if (!dest.connection) continue;
@@ -398,51 +398,51 @@ export class StreamsService {
         }
 
       } else if (dest.platform === 'instagram') {
-        this.logger.log(`Attempting Instagram Live creation for stream ${streamId}...`);
-        let result: { liveVideoId: string; streamUrl: string; streamKey: string } | null;
+        // Instagram uses the Live Producer RTMPS workflow.
+        // The user obtains an RTMPS URL + stream key from instagram.com/live
+        // and saves them via PUT /api/streams/:id/instagram-credentials before starting.
+        // We do NOT call the Graph API to create a live session — that endpoint is read-only.
 
         if (isMock) {
-          result = {
-            liveVideoId: `mock_instagram_video_${streamId}`,
-            streamUrl: `rtmp://127.0.0.1:1935/live/mock_instagram_key_${streamId}`,
-            streamKey: `mock_instagram_key_${streamId}`,
-          };
-          this.logger.log(`Using mock Instagram destination for stream ${streamId}`);
-        } else {
-          const instagramAccountId = dest.connection.accountId;
-          result = await this.facebookApiService.createInstagramLive(
-            instagramAccountId,
-            accessToken,
-            session.title,
-          );
-        }
-
-        if (result) {
-          await this.sessionRepo.update(streamId, {
-            instagramLiveId: result.liveVideoId,
-          });
-
+          const mockRtmpUrl = `rtmp://127.0.0.1:1935/live/mock_instagram_key_${streamId}`;
+          const mockStreamKey = `mock_instagram_key_${streamId}`;
           await this.destRepo.update(dest.id, {
-            rtmpUrl: result.streamUrl,
-            streamKey: result.streamKey,
+            rtmpUrl: mockRtmpUrl,
+            streamKey: mockStreamKey,
             status: 'active',
           });
-
           destInfo.push({
             platform: dest.platform,
             connectionId: dest.connectionId,
             accessToken,
-            rtmpUrl: result.streamUrl,
-            streamKey: result.streamKey,
+            rtmpUrl: mockRtmpUrl,
+            streamKey: mockStreamKey,
           });
-
-          this.logger.log(`Instagram: liveVideoId=${result.liveVideoId}`);
+          this.logger.log(`[MOCK] Instagram destination active for stream ${streamId}`);
+        } else if (dest.rtmpUrl && dest.streamKey) {
+          // Credentials already saved by the user via saveInstagramCredentials()
+          await this.destRepo.update(dest.id, { status: 'active', errorMessage: null });
+          destInfo.push({
+            platform: dest.platform,
+            connectionId: dest.connectionId,
+            accessToken,
+            rtmpUrl: dest.rtmpUrl,
+            streamKey: dest.streamKey,
+          });
+          this.logger.log(
+            `Instagram: forwarding to ${dest.rtmpUrl.replace(/live_[^/]+$/, 'live_***')}`,
+          );
         } else {
           await this.destRepo.update(dest.id, {
             status: 'error',
-            errorMessage: 'Instagram Live requires instagram_manage_live_media scope (Meta App Review required for production).',
+            errorMessage:
+              'Instagram RTMPS credentials not set. ' +
+              'Open instagram.com → Create → Live, copy your Stream URL and Stream Key, ' +
+              'then paste them into XIT Streamer before starting the stream.',
           });
-          this.logger.warn(`Instagram Live creation failed — requires instagram_manage_live_media scope`);
+          this.logger.warn(
+            `Instagram destination skipped for stream ${streamId} — no RTMPS credentials configured.`,
+          );
         }
       }
     }
@@ -631,6 +631,77 @@ export class StreamsService {
   }
 
   /**
+   * Save Instagram Live Producer RTMPS credentials for a stream destination.
+   *
+   * The user obtains the RTMPS URL (rtmps://live-upload.instagram.com:443/rtmp/)
+   * and a per-session stream key from instagram.com → Create → Live, then
+   * pastes them here. startStream() picks them up and passes them to FFmpeg.
+   *
+   * If no Instagram destination exists yet it is created, linked to the user's
+   * Instagram platform connection (needed for comment ingestion).
+   */
+  async saveInstagramCredentials(
+    userId: string,
+    streamId: string,
+    rtmpsUrl: string,
+    streamKey: string,
+  ): Promise<StreamDestination> {
+    // Verify stream ownership
+    const session = await this.getStream(userId, streamId);
+
+    if (['live', 'ending', 'completed'].includes(session.status)) {
+      throw new BadRequestException(
+        `Cannot update Instagram credentials on a stream in "${session.status}" state.`,
+      );
+    }
+
+    // Validate the URL looks like an Instagram RTMPS endpoint
+    if (!rtmpsUrl.startsWith('rtmps://') && !rtmpsUrl.startsWith('rtmp://')) {
+      throw new BadRequestException(
+        'Invalid RTMPS URL. It should start with rtmps:// (e.g. rtmps://live-upload.instagram.com:443/rtmp/).',
+      );
+    }
+
+    if (!streamKey || streamKey.trim().length < 4) {
+      throw new BadRequestException('Stream key is too short or empty.');
+    }
+
+    // Find or create the Instagram stream destination for this session
+    let dest = await this.destRepo.findOne({
+      where: { sessionId: streamId, platform: 'instagram' },
+    });
+
+    if (!dest) {
+      // Link to the user's Instagram connection (for comment polling)
+      const igConn = await this.connectionRepo.findOne({
+        where: { userId, platform: 'instagram', connectionStatus: 'connected' },
+        order: { lastSyncedAt: 'DESC' },
+      });
+
+      dest = this.destRepo.create({
+        sessionId: streamId,
+        connectionId: igConn?.id ?? null,
+        platform: 'instagram',
+        status: 'pending',
+      });
+    }
+
+    dest.rtmpUrl = rtmpsUrl.trim();
+    dest.streamKey = streamKey.trim();
+    dest.status = 'pending';
+    dest.errorMessage = null;
+
+    await this.destRepo.save(dest);
+
+    this.logger.log(
+      `Instagram credentials saved for stream ${streamId}: ` +
+      `url=${rtmpsUrl.trim()}, key=live_***`,
+    );
+
+    return dest;
+  }
+
+  /**
    * Handle a WebRTC SDP offer from Browser Studio.
    * Proxies the offer to SRS /rtc/v1/publish/ and returns the SDP answer.
    * SRS acts as the WebRTC endpoint — the browser publishes directly into SRS,
@@ -655,6 +726,11 @@ export class StreamsService {
     // Log first codec line so we can confirm H264 is being offered
     const firstCodecLine = offer.sdp.split('\n').find((l) => l.startsWith('a=rtpmap:'));
     this.logger.log(`WebRTC offer received for stream ${streamId} — first codec: ${firstCodecLine?.trim() ?? 'none'}`);
+
+    // Kick any existing SRS publisher for this stream key before re-negotiating.
+    // SRS returns code 400 if the stream is already being published (e.g. a zombie
+    // session from a previous browser tab or a stuck stream).
+    await this.kickSrsPublisher(srsHttpApi, session.streamKey, streamId);
 
     try {
       const srsResponse = await axios.post(
@@ -693,6 +769,27 @@ export class StreamsService {
       const msg = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error(`WebRTC offer proxy failed: ${msg}`);
       throw new BadRequestException(`Failed to negotiate WebRTC session: ${msg}`);
+    }
+  }
+
+  /**
+   * Find and kick any active SRS client publishing to the given stream key.
+   * Safe to call when there is no active publisher — returns silently.
+   */
+  private async kickSrsPublisher(srsHttpApi: string, streamKey: string, streamId: string): Promise<void> {
+    try {
+      const streamsRes = await axios.get(`${srsHttpApi}/api/v1/streams/`, { timeout: 5000 });
+      const streams: Array<{ name: string; publish?: { cid?: string } }> = streamsRes.data?.streams ?? [];
+      const match = streams.find((s) => s.name === streamKey);
+      if (!match?.publish?.cid) return;
+
+      const cid = match.publish.cid;
+      this.logger.warn(`WebRTC: kicking existing SRS publisher cid=${cid} for stream ${streamId} key=${streamKey}`);
+      await axios.delete(`${srsHttpApi}/api/v1/clients/${cid}`, { timeout: 5000 });
+      // Small delay to let SRS clean up the slot before the new offer
+      await new Promise((r) => setTimeout(r, 500));
+    } catch {
+      // Non-fatal — proceed with the offer; SRS will return 400 if still occupied
     }
   }
 }

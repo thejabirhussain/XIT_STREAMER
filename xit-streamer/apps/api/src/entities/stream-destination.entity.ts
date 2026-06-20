@@ -20,16 +20,16 @@ export class StreamDestination {
   sessionId: string;
 
   @Column({ type: 'uuid', nullable: true, name: 'connection_id' })
-  connectionId: string;
+  connectionId: string | null;
 
   @Column({ type: 'varchar', length: 50 })
   platform: string;
 
   @Column({ type: 'text', nullable: true, name: 'rtmp_url' })
-  rtmpUrl: string;
+  rtmpUrl: string | null;
 
   @Column({ type: 'text', nullable: true, name: 'stream_key' })
-  streamKey: string;
+  streamKey: string | null;
 
   @Column({
     type: 'varchar',
@@ -39,7 +39,7 @@ export class StreamDestination {
   status: DestinationStatus;
 
   @Column({ type: 'text', nullable: true, name: 'error_message' })
-  errorMessage: string;
+  errorMessage: string | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
@@ -48,7 +48,7 @@ export class StreamDestination {
   @JoinColumn({ name: 'session_id' })
   session: LivestreamSession;
 
-  @ManyToOne(() => PlatformConnection, { nullable: true })
+  @ManyToOne(() => PlatformConnection, { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'connection_id' })
   connection: PlatformConnection;
 }
