@@ -90,4 +90,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   emitConnectionExpired(userId: string, event: Record<string, unknown>): void {
     this.server.to(`user:${userId}`).emit('connection:expired', event);
   }
+
+  emitOverlayState(sessionId: string, overlays: unknown[]): void {
+    this.server.to(`stream:${sessionId}`).emit('overlay:state', { overlays });
+  }
 }

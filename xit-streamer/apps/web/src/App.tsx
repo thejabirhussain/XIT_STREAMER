@@ -11,6 +11,8 @@ import { StreamDetailPage } from './pages/StreamDetailPage';
 import { ChatPage } from './pages/ChatPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { BrowserStudioPage } from './pages/BrowserStudioPage';
+import { OverlayStudioPage } from './pages/OverlayStudioPage';
+import { OverlayRendererPage } from './pages/OverlayRendererPage';
 import { useAuthStore } from './stores/auth.store';
 
 export default function App() {
@@ -23,6 +25,9 @@ export default function App() {
       <Route path="/login" element={isAuthenticated ? <Navigate to="/dashboard" /> : <LoginPage />} />
       <Route path="/auth/callback" element={<AuthCallbackPage />} />
 
+      {/* Standalone overlay renderer — no auth wrapper, transparent bg */}
+      <Route path="/streams/:id/overlay-renderer" element={<OverlayRendererPage />} />
+
       {/* Protected routes */}
       <Route element={<AppLayout />}>
         <Route path="/dashboard"             element={<DashboardPage />} />
@@ -30,6 +35,7 @@ export default function App() {
         <Route path="/streams"               element={<StreamsPage />} />
         <Route path="/streams/:id"           element={<StreamDetailPage />} />
         <Route path="/streams/:id/studio"    element={<BrowserStudioPage />} />
+        <Route path="/streams/:id/overlays"  element={<OverlayStudioPage />} />
         <Route path="/chat"                  element={<ChatPage />} />
         <Route path="/settings"              element={<SettingsPage />} />
       </Route>

@@ -10,12 +10,14 @@ import { WebhooksModule } from './webhooks/webhooks.module';
 import { HealthModule } from './health/health.module';
 import { InternalModule } from './internal/internal.module';
 import { MediaModule } from './media/media.module';
+import { OverlaysModule } from './overlays/overlays.module';
 import { User } from './entities/user.entity';
 import { PlatformConnection } from './entities/platform-connection.entity';
 import { LivestreamSession } from './entities/livestream-session.entity';
 import { StreamDestination } from './entities/stream-destination.entity';
 import { ChatMessage } from './entities/chat-message.entity';
 import { StreamHealthSnapshot } from './entities/stream-health-snapshot.entity';
+import { Overlay } from './entities/overlay.entity';
 import appConfig from './config/app.config';
 
 @Module({
@@ -38,6 +40,7 @@ import appConfig from './config/app.config';
           StreamDestination,
           ChatMessage,
           StreamHealthSnapshot,
+          Overlay,
         ],
         synchronize: config.get<string>('app.nodeEnv') !== 'production',
         logging: config.get<string>('app.nodeEnv') === 'development',
@@ -57,6 +60,7 @@ import appConfig from './config/app.config';
     HealthModule,
     InternalModule,
     MediaModule,
+    OverlaysModule,
   ],
 })
 export class AppModule {}

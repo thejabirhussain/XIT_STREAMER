@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Activity, Clock, Wifi, Monitor, Square, RefreshCw, Copy, Eye, EyeOff, Key, ExternalLink, CheckCircle } from 'lucide-react';
+import { ArrowLeft, Activity, Clock, Wifi, Monitor, Square, RefreshCw, Copy, Eye, EyeOff, Key, ExternalLink, CheckCircle, Layers } from 'lucide-react';
 import { api } from '../lib/api';
 import { getSocket, joinStreamRoom, leaveStreamRoom } from '../lib/socket';
 import { useStreamStore } from '../stores/stream.store';
@@ -384,6 +384,10 @@ export function StreamDetailPage() {
           </code>
         )}
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
+          {/* Overlay Studio — always available */}
+          <Button variant="secondary" size="sm" icon={<Layers size={14} />} onClick={() => navigate(`/streams/${s.id}/overlays`)} id="btn-open-overlays">
+            Overlays
+          </Button>
           {/* Browser Studio button — for webrtc streams in any pre-live state */}
           {isWebRtc && !isLive && (
             <Button variant="secondary" size="sm" icon={<Monitor size={14} />} onClick={() => navigate(`/streams/${s.id}/studio`)} id="btn-open-studio">
