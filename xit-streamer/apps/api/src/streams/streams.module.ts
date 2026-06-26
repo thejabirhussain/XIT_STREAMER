@@ -14,6 +14,7 @@ import { CryptoService } from '../common/crypto/crypto.service';
 import { MediaModule } from '../media/media.module';
 import { PlatformsModule } from '../platforms/platforms.module';
 import { ChatModule } from '../chat/chat.module';
+import { ChatService } from '../chat/chat.service';
 
 @Module({
   imports: [
@@ -35,7 +36,7 @@ import { ChatModule } from '../chat/chat.module';
     ChatModule,
   ],
   controllers: [StreamsController],
-  providers: [StreamsService, StreamKeyService, CryptoService],
+  providers: [StreamsService, StreamKeyService, CryptoService, ChatService],
   exports: [StreamsService],
 })
 export class StreamsModule {}

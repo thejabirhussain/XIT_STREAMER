@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { getSocket, joinStreamRoom, leaveStreamRoom } from '../lib/socket';
 import { useStreamStore } from '../stores/stream.store';
 import { Badge } from '../components/ui/Badge';
-import { Input } from '../components/ui/Input';
-import { Search, MessageSquare } from 'lucide-react';
+import { Search, MessageSquare, Pin, Star, Layers, Sparkles } from 'lucide-react';
+import { toast } from '../components/ui/Toast';
 
 const PLATFORM_COLORS: Record<string, string> = {
   youtube: 'var(--color-youtube)',
@@ -20,12 +20,30 @@ function timeAgo(dateStr: string): string {
   return `${Math.floor(diff / 3600000)}h ago`;
 }
 
+interface ChatMessage {
+  id: string;
+  platform: string;
+  username: string;
+  displayName: string;
+  avatarUrl?: string;
+  message: string;
+  receivedAt: string;
+  pinned?: boolean;
+  highlighted?: boolean;
+  featured?: boolean;
+}
+
 export function ChatPage() {
   const { chatMessages, addChatMessage, chatFilter, setChatFilter, setActiveSession, setChatMessages } = useStreamStore();
   const chatRef = useRef<HTMLDivElement>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [autoScroll, setAutoScroll] = useState(true);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  // Local moderation state (updates via socket)
+  const [moderationState, setModerationState] = useState<Record<string, { pinned?: boolean; highlighted?: boolean; featured?: boolean }>>({});
+
+  const qc = useQueryClient();
 
   const { data: streamsData } = useQuery({
     queryKey: ['streams', 'live'],
@@ -35,45 +53,61 @@ export function ChatPage() {
 
   const liveStreams = (streamsData as unknown as { data?: { id: string; title: string }[] })?.data || [];
 
-  // Auto-select first live stream
   useEffect(() => {
     if (liveStreams.length > 0 && !selectedSessionId) {
       setSelectedSessionId(liveStreams[0].id);
     }
   }, [liveStreams, selectedSessionId]);
 
-  // Set active session, fetch chat history, and join socket room when session selected
   useEffect(() => {
     if (!selectedSessionId) return;
     setActiveSession(selectedSessionId);
 
-    // Fetch initial chat history
     api.get(`/streams/${selectedSessionId}/chat?limit=100`)
-      .then((res: any) => {
-        if (res?.data) {
-          setChatMessages(res.data);
+      .then((res: unknown) => {
+        const msgs = (res as { data?: ChatMessage[] })?.data;
+        if (msgs) {
+          setChatMessages(msgs);
+          // Restore moderation state
+          const mod: typeof moderationState = {};
+          for (const m of msgs) {
+            if (m.pinned || m.highlighted || m.featured) {
+              mod[m.id] = { pinned: m.pinned, highlighted: m.highlighted, featured: m.featured };
+            }
+          }
+          setModerationState(mod);
         }
       })
-      .catch((err) => {
-        console.error('Failed to fetch chat history:', err);
-      });
+      .catch(() => {});
 
     joinStreamRoom(selectedSessionId);
     const socket = getSocket();
+
     const handleNewMessage = (msg: Parameters<typeof addChatMessage>[0]) => {
       addChatMessage(msg);
     };
+    const handleModeration = (event: { messageId: string; pinned?: boolean; highlighted?: boolean; featured?: boolean }) => {
+      setModerationState(prev => ({
+        ...prev,
+        [event.messageId]: {
+          pinned: event.pinned,
+          highlighted: event.highlighted,
+          featured: event.featured,
+        },
+      }));
+    };
 
     socket.on('chat:message', handleNewMessage);
+    socket.on('chat:moderation', handleModeration);
 
     return () => {
       leaveStreamRoom(selectedSessionId);
       socket.off('chat:message', handleNewMessage);
+      socket.off('chat:moderation', handleModeration);
       setActiveSession(null);
     };
   }, [selectedSessionId, setActiveSession, setChatMessages, addChatMessage]);
 
-  // Auto-scroll
   useEffect(() => {
     if (autoScroll && chatRef.current) {
       chatRef.current.scrollTop = chatRef.current.scrollHeight;
@@ -84,6 +118,16 @@ export function ChatPage() {
     if (!chatRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = chatRef.current;
     setAutoScroll(scrollHeight - scrollTop - clientHeight < 100);
+  };
+
+  const moderateMutation = useMutation({
+    mutationFn: ({ messageId, action }: { messageId: string; action: string }) =>
+      api.post(`/streams/${selectedSessionId}/chat/${messageId}/moderate`, { action }),
+    onError: () => toast.error('Moderation action failed'),
+  });
+
+  const handleModerate = (messageId: string, action: string) => {
+    moderateMutation.mutate({ messageId, action });
   };
 
   const filtered = chatMessages.filter((m) => {
@@ -101,6 +145,8 @@ export function ChatPage() {
     instagram: chatMessages.filter((m) => m.platform === 'instagram').length,
   };
 
+  const pinnedMessages = chatMessages.filter(m => moderationState[m.id]?.pinned);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', animation: 'fade-in 200ms ease' }}>
 
@@ -113,7 +159,6 @@ export function ChatPage() {
       }}>
         <h1 style={{ fontSize: '18px', fontWeight: 700, margin: 0, flex: 1 }}>Unified Chat</h1>
 
-        {/* Stream selector */}
         {liveStreams.length > 0 && (
           <select
             id="chat-stream-selector"
@@ -135,6 +180,25 @@ export function ChatPage() {
           {counts.all.toLocaleString()} messages
         </span>
       </div>
+
+      {/* Pinned messages bar */}
+      {pinnedMessages.length > 0 && (
+        <div style={{
+          background: 'rgba(108,99,255,0.08)', borderBottom: '1px solid rgba(108,99,255,0.2)',
+          padding: '8px var(--space-5)', display: 'flex', alignItems: 'center', gap: '8px',
+          flexShrink: 0,
+        }}>
+          <Pin size={13} color="var(--color-accent)" />
+          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-accent)' }}>Pinned:</span>
+          <span style={{ fontSize: '12px', color: 'var(--color-text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <strong style={{ color: 'var(--color-text)' }}>{pinnedMessages[0].displayName}</strong>: {pinnedMessages[0].message}
+          </span>
+          <button
+            onClick={() => handleModerate(pinnedMessages[0].id, 'unpin')}
+            style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '16px', lineHeight: 1 }}
+          >×</button>
+        </div>
+      )}
 
       {/* Filter bar */}
       <div style={{
@@ -192,7 +256,7 @@ export function ChatPage() {
       <div
         ref={chatRef}
         onScroll={handleScroll}
-        style={{ flex: 1, overflowY: 'auto', padding: 'var(--space-4) var(--space-5)', display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}
+        style={{ flex: 1, overflowY: 'auto', padding: 'var(--space-4) var(--space-5)', display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}
       >
         {!selectedSessionId
           ? <div style={{ textAlign: 'center', color: 'var(--color-text-muted)', paddingTop: '40px' }}>
@@ -204,26 +268,108 @@ export function ChatPage() {
             ? <div style={{ textAlign: 'center', color: 'var(--color-text-muted)', paddingTop: '40px', fontSize: '14px' }}>
                 Waiting for messages…
               </div>
-            : filtered.map((m) => (
-                <div key={m.id} style={{ display: 'flex', gap: '10px', animation: 'fade-in 150ms ease' }}>
-                  <div style={{
-                    width: '8px', height: '8px', borderRadius: '50%',
-                    background: PLATFORM_COLORS[m.platform] || 'var(--color-text-muted)',
-                    flexShrink: 0, marginTop: '6px',
-                  }} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text)', marginRight: '6px' }}>
-                      {m.displayName}
-                    </span>
-                    <span style={{ fontSize: '13px', color: 'var(--color-text-muted)', marginRight: '8px' }}>
-                      {m.message}
-                    </span>
-                    <span style={{ fontSize: '11px', color: 'var(--color-text-subtle)' }}>
-                      {timeAgo(m.receivedAt)}
-                    </span>
+            : filtered.map((m) => {
+                const mod = moderationState[m.id] || {};
+                const isHovered = hoveredId === m.id;
+                const isHighlighted = mod.highlighted;
+                const isFeatured = mod.featured;
+                const isPinned = mod.pinned;
+
+                return (
+                  <div
+                    key={m.id}
+                    onMouseEnter={() => setHoveredId(m.id)}
+                    onMouseLeave={() => setHoveredId(null)}
+                    style={{
+                      display: 'flex', gap: '10px', animation: 'fade-in 150ms ease',
+                      padding: '6px 8px', borderRadius: '8px',
+                      background: isFeatured
+                        ? 'rgba(251,191,36,0.08)'
+                        : isHighlighted
+                        ? 'rgba(108,99,255,0.08)'
+                        : isPinned
+                        ? 'rgba(34,197,94,0.06)'
+                        : isHovered
+                        ? 'var(--color-surface-2)'
+                        : 'transparent',
+                      border: isFeatured
+                        ? '1px solid rgba(251,191,36,0.2)'
+                        : isHighlighted
+                        ? '1px solid rgba(108,99,255,0.2)'
+                        : '1px solid transparent',
+                      transition: 'background 100ms ease',
+                      position: 'relative',
+                    }}
+                  >
+                    <div style={{
+                      width: '8px', height: '8px', borderRadius: '50%',
+                      background: PLATFORM_COLORS[m.platform] || 'var(--color-text-muted)',
+                      flexShrink: 0, marginTop: '5px',
+                    }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
+                        <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text)' }}>
+                          {m.displayName}
+                        </span>
+                        {isPinned && <Pin size={10} color="var(--color-green)" />}
+                        {isHighlighted && <Sparkles size={10} color="var(--color-accent)" />}
+                        {isFeatured && <Star size={10} color="#FBBF24" />}
+                        <span style={{ fontSize: '11px', color: 'var(--color-text-subtle)', marginLeft: 'auto' }}>
+                          {timeAgo(m.receivedAt)}
+                        </span>
+                      </div>
+                      <span style={{ fontSize: '13px', color: 'var(--color-text-muted)', lineHeight: '1.4' }}>
+                        {m.message}
+                      </span>
+                    </div>
+
+                    {/* Moderation actions — shown on hover */}
+                    {isHovered && (
+                      <div style={{
+                        position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)',
+                        display: 'flex', gap: '4px',
+                      }}>
+                        <button
+                          title={isPinned ? 'Unpin' : 'Pin to top'}
+                          onClick={() => handleModerate(m.id, isPinned ? 'unpin' : 'pin')}
+                          style={{
+                            width: '26px', height: '26px', borderRadius: '6px', border: 'none',
+                            background: isPinned ? 'rgba(34,197,94,0.2)' : 'var(--color-surface-3)',
+                            color: isPinned ? 'var(--color-green)' : 'var(--color-text-muted)',
+                            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          }}
+                        >
+                          <Pin size={12} />
+                        </button>
+                        <button
+                          title={isHighlighted ? 'Remove highlight' : 'Highlight'}
+                          onClick={() => handleModerate(m.id, isHighlighted ? 'unhighlight' : 'highlight')}
+                          style={{
+                            width: '26px', height: '26px', borderRadius: '6px', border: 'none',
+                            background: isHighlighted ? 'var(--color-accent-bg)' : 'var(--color-surface-3)',
+                            color: isHighlighted ? 'var(--color-accent)' : 'var(--color-text-muted)',
+                            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          }}
+                        >
+                          <Sparkles size={12} />
+                        </button>
+                        <button
+                          title={isFeatured ? 'Remove from stream' : 'Feature on stream'}
+                          onClick={() => handleModerate(m.id, isFeatured ? 'unfeature' : 'feature')}
+                          style={{
+                            width: '26px', height: '26px', borderRadius: '6px', border: 'none',
+                            background: isFeatured ? 'rgba(251,191,36,0.15)' : 'var(--color-surface-3)',
+                            color: isFeatured ? '#FBBF24' : 'var(--color-text-muted)',
+                            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          }}
+                        >
+                          <Layers size={12} />
+                        </button>
+                      </div>
+                    )}
                   </div>
-                </div>
-              ))
+                );
+              })
         }
       </div>
 

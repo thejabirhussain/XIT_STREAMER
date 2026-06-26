@@ -2,9 +2,10 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowLeft, Plus, Trash2, Eye, EyeOff, ChevronUp, ChevronDown, Layers,
-  Settings2, Copy, LayoutTemplate, ExternalLink, Loader2,
+  ArrowLeft, Trash2, Eye, EyeOff, Layers,
+  Settings2, LayoutTemplate, ExternalLink, Loader2,
   ShoppingBag, Zap, QrCode, Type, Image, Globe, MousePointerClick,
+  Megaphone, Tag, Package, Star, MessageSquare,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { Button } from '../components/ui/Button';
@@ -123,6 +124,73 @@ const TEMPLATES: OverlayTemplate[] = [
     defaultWidth: 32,
     defaultHeight: 7,
   },
+  {
+    type: 'announcement_banner',
+    name: 'Announcement',
+    icon: <Megaphone size={18} />,
+    color: '#6C63FF',
+    defaultConfig: {
+      title: 'ANNOUNCEMENT',
+      text: 'Something exciting is happening right now!',
+      emoji: '📢',
+      accentColor: '#6C63FF',
+    },
+    defaultWidth: 50,
+    defaultHeight: 9,
+  },
+  {
+    type: 'coupon_banner',
+    name: 'Coupon Code',
+    icon: <Tag size={18} />,
+    color: '#FBBF24',
+    defaultConfig: {
+      code: 'SAVE20',
+      discount: '20% OFF',
+      description: 'Use code at checkout — today only!',
+    },
+    defaultWidth: 40,
+    defaultHeight: 12,
+  },
+  {
+    type: 'limited_stock',
+    name: 'Limited Stock',
+    icon: <Package size={18} />,
+    color: '#EF4444',
+    defaultConfig: {
+      text: 'Limited Stock!',
+      remaining: 5,
+      total: 20,
+    },
+    defaultWidth: 32,
+    defaultHeight: 14,
+  },
+  {
+    type: 'brand_logo',
+    name: 'Brand Logo',
+    icon: <Star size={18} />,
+    color: '#3B82F6',
+    defaultConfig: {
+      name: 'Your Brand',
+      tagline: 'Live Shopping',
+      logoUrl: '',
+    },
+    defaultWidth: 24,
+    defaultHeight: 9,
+  },
+  {
+    type: 'comment_highlight',
+    name: 'Comment Highlight',
+    icon: <MessageSquare size={18} />,
+    color: '#22C55E',
+    defaultConfig: {
+      platform: 'YouTube',
+      displayName: 'Viewer',
+      message: 'This is a highlighted comment!',
+      accentColor: '#22C55E',
+    },
+    defaultWidth: 44,
+    defaultHeight: 12,
+  },
 ];
 
 /* ─── Config Editor ──────────────────────────────────────────────────────── */
@@ -231,6 +299,43 @@ function OverlayEditor({
       case 'website': return (
         <ConfigField label="Website URL" value={cfg.url as string} onChange={(v) => set('url', v)} placeholder="https://your-store.com" />
       );
+      case 'announcement_banner': return (
+        <>
+          <ConfigField label="Title" value={cfg.title as string} onChange={(v) => set('title', v)} placeholder="ANNOUNCEMENT" />
+          <ConfigField label="Message" value={cfg.text as string} onChange={(v) => set('text', v)} placeholder="Your message..." />
+          <ConfigField label="Emoji" value={cfg.emoji as string} onChange={(v) => set('emoji', v)} placeholder="📢" />
+          <ConfigField label="Accent Color" value={cfg.accentColor as string} onChange={(v) => set('accentColor', v)} type="color" />
+        </>
+      );
+      case 'coupon_banner': return (
+        <>
+          <ConfigField label="Coupon Code" value={cfg.code as string} onChange={(v) => set('code', v)} placeholder="SAVE20" />
+          <ConfigField label="Discount Text" value={cfg.discount as string} onChange={(v) => set('discount', v)} placeholder="20% OFF" />
+          <ConfigField label="Description" value={cfg.description as string} onChange={(v) => set('description', v)} placeholder="Use code at checkout" />
+        </>
+      );
+      case 'limited_stock': return (
+        <>
+          <ConfigField label="Headline" value={cfg.text as string} onChange={(v) => set('text', v)} placeholder="Limited Stock!" />
+          <ConfigField label="Remaining" value={cfg.remaining as number} onChange={(v) => set('remaining', parseInt(v) || 0)} type="number" />
+          <ConfigField label="Total Stock" value={cfg.total as number} onChange={(v) => set('total', parseInt(v) || 20)} type="number" />
+        </>
+      );
+      case 'brand_logo': return (
+        <>
+          <ConfigField label="Brand Name" value={cfg.name as string} onChange={(v) => set('name', v)} placeholder="Your Brand" />
+          <ConfigField label="Tagline" value={cfg.tagline as string} onChange={(v) => set('tagline', v)} placeholder="Live Shopping" />
+          <ConfigField label="Logo URL" value={cfg.logoUrl as string} onChange={(v) => set('logoUrl', v)} placeholder="https://..." />
+        </>
+      );
+      case 'comment_highlight': return (
+        <>
+          <ConfigField label="Platform" value={cfg.platform as string} onChange={(v) => set('platform', v)} placeholder="YouTube" />
+          <ConfigField label="Display Name" value={cfg.displayName as string} onChange={(v) => set('displayName', v)} placeholder="Viewer Name" />
+          <ConfigField label="Message" value={cfg.message as string} onChange={(v) => set('message', v)} placeholder="Comment text..." />
+          <ConfigField label="Accent Color" value={cfg.accentColor as string} onChange={(v) => set('accentColor', v)} type="color" />
+        </>
+      );
       default: return null;
     }
   };
@@ -284,16 +389,30 @@ function OverlayEditor({
           </div>
         </div>
 
+        {/* Rotation */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Rotation: {overlay.rotation ?? 0}°
+          </label>
+          <input
+            type="range"
+            min="-180" max="180" step="1"
+            value={overlay.rotation ?? 0}
+            onChange={(e) => onUpdate({ rotation: parseFloat(e.target.value) })}
+            style={{ width: '100%', accentColor: 'var(--color-accent)' }}
+          />
+        </div>
+
         {/* Opacity */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
           <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Opacity: {Math.round(((overlay.styleOverrides?.opacity as number) ?? 1) * 100)}%
+            Opacity: {Math.round((overlay.opacity ?? 1) * 100)}%
           </label>
           <input
             type="range"
             min="0" max="1" step="0.05"
-            value={(overlay.styleOverrides?.opacity as number) ?? 1}
-            onChange={(e) => onUpdate({ styleOverrides: { ...overlay.styleOverrides, opacity: parseFloat(e.target.value) } })}
+            value={overlay.opacity ?? 1}
+            onChange={(e) => onUpdate({ opacity: parseFloat(e.target.value) })}
             style={{ width: '100%', accentColor: 'var(--color-accent)' }}
           />
         </div>
@@ -455,7 +574,7 @@ export function OverlayStudioPage() {
         </Link>
         <Layers size={16} style={{ color: 'var(--color-accent)' }} />
         <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text)' }}>Overlay Studio</span>
-        {streamData?.title && (
+        {!!streamData?.title && (
           <span style={{ fontSize: '12px', color: 'var(--color-text-muted)' }}>— {streamData.title as string}</span>
         )}
         <div style={{ flex: 1 }} />
@@ -471,7 +590,7 @@ export function OverlayStudioPage() {
         >
           <ExternalLink size={13} /> Copy OBS URL
         </button>
-        <Badge variant="default" dot={overlays.length > 0}>{overlays.length} overlay{overlays.length !== 1 ? 's' : ''}</Badge>
+        <Badge variant="gray" dot={overlays.length > 0}>{overlays.length} overlay{overlays.length !== 1 ? 's' : ''}</Badge>
       </div>
 
       {/* Main 3-column layout */}
@@ -609,6 +728,7 @@ export function OverlayStudioPage() {
                   onSelect={() => { setSelectedId(o.id); setPendingUpdate(null); }}
                   canvasRef={canvasRef}
                   onMove={(x, y) => handleOverlayUpdate({ x, y })}
+                  onResize={(width, height) => handleOverlayUpdate({ width, height })}
                 />
               ))}
             </div>

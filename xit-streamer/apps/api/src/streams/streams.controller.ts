@@ -13,6 +13,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { StreamsService } from './streams.service';
+import { ChatService } from '../chat/chat.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser, JwtPayload } from '../common/decorators/current-user.decorator';
 import { CreateStreamDto } from './dto/create-stream.dto';
@@ -22,7 +23,10 @@ import { WebRtcOfferDto } from './dto/webrtc-offer.dto';
 @Controller('streams')
 @UseGuards(JwtAuthGuard)
 export class StreamsController {
-  constructor(private readonly streamsService: StreamsService) {}
+  constructor(
+    private readonly streamsService: StreamsService,
+    private readonly chatService: ChatService,
+  ) {}
 
   /**
    * GET /api/streams
@@ -159,5 +163,35 @@ export class StreamsController {
       sdp: dto.sdp,
       type: dto.type,
     });
+  }
+
+  /**
+   * POST /api/streams/:id/chat/:messageId/moderate
+   * Moderator actions: pin, unpin, highlight, unhighlight, feature, unfeature
+   */
+  @Post(':id/chat/:messageId/moderate')
+  @HttpCode(HttpStatus.OK)
+  async moderateMessage(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('messageId', ParseUUIDPipe) messageId: string,
+    @Body('action') action: 'pin' | 'unpin' | 'highlight' | 'unhighlight' | 'feature' | 'unfeature',
+  ) {
+    return this.chatService.moderateMessage(id, messageId, action);
+  }
+
+  /**
+   * GET /api/streams/:id/chat/pinned
+   */
+  @Get(':id/chat/pinned')
+  async getPinnedMessages(@Param('id', ParseUUIDPipe) id: string) {
+    return this.chatService.getPinnedMessages(id);
+  }
+
+  /**
+   * GET /api/streams/:id/chat/featured
+   */
+  @Get(':id/chat/featured')
+  async getFeaturedMessage(@Param('id', ParseUUIDPipe) id: string) {
+    return this.chatService.getFeaturedMessage(id);
   }
 }

@@ -39,6 +39,15 @@ export class ChatMessage {
   @Column({ type: 'timestamptz', nullable: true, name: 'platform_ts' })
   platformTs: Date;
 
+  @Column({ type: 'boolean', default: false })
+  pinned: boolean;
+
+  @Column({ type: 'boolean', default: false })
+  highlighted: boolean;
+
+  @Column({ type: 'boolean', default: false })
+  featured: boolean;
+
   @CreateDateColumn({ name: 'received_at', type: 'timestamptz' })
   receivedAt: Date;
 

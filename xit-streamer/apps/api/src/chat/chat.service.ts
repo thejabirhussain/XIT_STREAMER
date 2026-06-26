@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ChatMessage } from '../entities/chat-message.entity';
@@ -66,5 +66,50 @@ export class ChatService {
     });
 
     return saved;
+  }
+
+  async moderateMessage(
+    sessionId: string,
+    messageId: string,
+    action: 'pin' | 'unpin' | 'highlight' | 'unhighlight' | 'feature' | 'unfeature',
+  ): Promise<ChatMessage> {
+    const msg = await this.chatRepo.findOne({ where: { id: messageId, sessionId } });
+    if (!msg) throw new NotFoundException('Message not found');
+
+    switch (action) {
+      case 'pin':         msg.pinned = true; break;
+      case 'unpin':       msg.pinned = false; break;
+      case 'highlight':   msg.highlighted = true; break;
+      case 'unhighlight': msg.highlighted = false; break;
+      case 'feature':     msg.featured = true; break;
+      case 'unfeature':   msg.featured = false; break;
+    }
+
+    const saved = await this.chatRepo.save(msg);
+
+    // Broadcast updated moderation state
+    this.chatGateway.emitChatModeration(sessionId, {
+      messageId: saved.id,
+      action,
+      pinned: saved.pinned,
+      highlighted: saved.highlighted,
+      featured: saved.featured,
+    });
+
+    return saved;
+  }
+
+  async getPinnedMessages(sessionId: string): Promise<ChatMessage[]> {
+    return this.chatRepo.find({
+      where: { sessionId, pinned: true },
+      order: { receivedAt: 'DESC' },
+    });
+  }
+
+  async getFeaturedMessage(sessionId: string): Promise<ChatMessage | null> {
+    return this.chatRepo.findOne({
+      where: { sessionId, featured: true },
+      order: { receivedAt: 'DESC' },
+    });
   }
 }

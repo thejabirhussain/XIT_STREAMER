@@ -94,4 +94,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   emitOverlayState(sessionId: string, overlays: unknown[]): void {
     this.server.to(`stream:${sessionId}`).emit('overlay:state', { overlays });
   }
+
+  emitChatModeration(sessionId: string, event: Record<string, unknown>): void {
+    this.server.to(`stream:${sessionId}`).emit('chat:moderation', event);
+  }
 }

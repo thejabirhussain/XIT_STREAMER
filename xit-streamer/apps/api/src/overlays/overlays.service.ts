@@ -36,6 +36,8 @@ export class OverlaysService {
       config: dto.config ?? {},
       styleOverrides: dto.styleOverrides ?? {},
       visible: dto.visible ?? true,
+      rotation: dto.rotation ?? 0,
+      opacity: dto.opacity ?? 1,
     });
 
     const saved = await this.repo.save(overlay);

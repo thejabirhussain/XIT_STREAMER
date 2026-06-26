@@ -17,7 +17,12 @@ export type OverlayType =
   | 'text'
   | 'image'
   | 'website'
-  | 'cta';
+  | 'cta'
+  | 'announcement_banner'
+  | 'coupon_banner'
+  | 'limited_stock'
+  | 'brand_logo'
+  | 'comment_highlight';
 
 export type OverlayAnimation =
   | 'none'
@@ -63,6 +68,12 @@ export class Overlay {
 
   @Column({ type: 'int', default: 1, name: 'z_index' })
   zIndex: number;
+
+  @Column({ type: 'float', default: 0 })
+  rotation: number;
+
+  @Column({ type: 'float', default: 1 })
+  opacity: number;
 
   @Column({ type: 'boolean', default: true })
   visible: boolean;
