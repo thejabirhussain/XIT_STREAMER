@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 export interface OverlayData {
   id: string;
@@ -437,12 +437,21 @@ const ANIMATION_KEYFRAMES: Record<string, string> = {
 
 export function OverlayItem({ overlay, isSelected, onSelect, onMove, onResize, canvasRef, readonly }: Props) {
   const dragOffset = React.useRef({ x: 0, y: 0 });
+  // Always-current refs so stale closures inside window listeners call the latest callbacks
+  const overlayRef = useRef(overlay);
+  overlayRef.current = overlay;
+  const onMoveRef = useRef(onMove);
+  onMoveRef.current = onMove;
+  const onResizeRef = useRef(onResize);
+  onResizeRef.current = onResize;
+  const rafIdRef = useRef<number | null>(null);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (readonly) return;
     e.stopPropagation();
+    e.preventDefault();
     onSelect?.();
-    if (!onMove || !canvasRef?.current) return;
+    if (!canvasRef?.current) return;
 
     const rect = canvasRef.current.getBoundingClientRect();
     dragOffset.current = {
@@ -451,12 +460,21 @@ export function OverlayItem({ overlay, isSelected, onSelect, onMove, onResize, c
     };
 
     const handleMove = (me: MouseEvent) => {
-      const nx = ((me.clientX - dragOffset.current.x) / rect.width) * 100;
-      const ny = ((me.clientY - dragOffset.current.y) / rect.height) * 100;
-      onMove(Math.max(0, Math.min(100 - overlay.width, nx)), Math.max(0, Math.min(100 - overlay.height, ny)));
+      if (rafIdRef.current !== null) cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = requestAnimationFrame(() => {
+        rafIdRef.current = null;
+        const ov = overlayRef.current;
+        const nx = ((me.clientX - dragOffset.current.x) / rect.width) * 100;
+        const ny = ((me.clientY - dragOffset.current.y) / rect.height) * 100;
+        onMoveRef.current?.(
+          Math.max(0, Math.min(100 - ov.width, nx)),
+          Math.max(0, Math.min(100 - ov.height, ny)),
+        );
+      });
     };
 
     const handleUp = () => {
+      if (rafIdRef.current !== null) { cancelAnimationFrame(rafIdRef.current); rafIdRef.current = null; }
       window.removeEventListener('mousemove', handleMove);
       window.removeEventListener('mouseup', handleUp);
     };
@@ -466,7 +484,7 @@ export function OverlayItem({ overlay, isSelected, onSelect, onMove, onResize, c
   };
 
   const handleResizeMouseDown = (e: React.MouseEvent, corner: string) => {
-    if (readonly || !onResize || !canvasRef?.current) return;
+    if (readonly || !canvasRef?.current) return;
     e.stopPropagation();
     e.preventDefault();
 
@@ -477,18 +495,24 @@ export function OverlayItem({ overlay, isSelected, onSelect, onMove, onResize, c
     const startH = overlay.height;
 
     const handleMove = (me: MouseEvent) => {
-      const dxPct = ((me.clientX - startX) / rect.width) * 100;
-      const dyPct = ((me.clientY - startY) / rect.height) * 100;
-      let nw = startW;
-      let nh = startH;
-      if (corner.includes('e')) nw = Math.max(5, Math.min(100 - overlay.x, startW + dxPct));
-      if (corner.includes('s')) nh = Math.max(5, Math.min(100 - overlay.y, startH + dyPct));
-      if (corner.includes('w')) nw = Math.max(5, startW - dxPct);
-      if (corner.includes('n')) nh = Math.max(5, startH - dyPct);
-      onResize(nw, nh);
+      if (rafIdRef.current !== null) cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = requestAnimationFrame(() => {
+        rafIdRef.current = null;
+        const ov = overlayRef.current;
+        const dxPct = ((me.clientX - startX) / rect.width) * 100;
+        const dyPct = ((me.clientY - startY) / rect.height) * 100;
+        let nw = startW;
+        let nh = startH;
+        if (corner.includes('e')) nw = Math.max(5, Math.min(100 - ov.x, startW + dxPct));
+        if (corner.includes('s')) nh = Math.max(5, Math.min(100 - ov.y, startH + dyPct));
+        if (corner.includes('w')) nw = Math.max(5, startW - dxPct);
+        if (corner.includes('n')) nh = Math.max(5, startH - dyPct);
+        onResizeRef.current?.(nw, nh);
+      });
     };
 
     const handleUp = () => {
+      if (rafIdRef.current !== null) { cancelAnimationFrame(rafIdRef.current); rafIdRef.current = null; }
       window.removeEventListener('mousemove', handleMove);
       window.removeEventListener('mouseup', handleUp);
     };
@@ -550,7 +574,7 @@ export function OverlayItem({ overlay, isSelected, onSelect, onMove, onResize, c
   });
 
   return (
-    <div style={containerStyle} onMouseDown={handleMouseDown}>
+    <div style={containerStyle} onMouseDown={handleMouseDown} onClick={(e) => e.stopPropagation()}>
       {renderContent()}
       {isSelected && !readonly && (
         <>

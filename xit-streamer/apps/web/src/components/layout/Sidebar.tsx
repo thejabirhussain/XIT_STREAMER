@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { ThemeToggle } from '../ThemeToggle';
 import {
@@ -11,9 +11,11 @@ import {
   ChevronLeft,
   ChevronRight,
   Zap,
+  MonitorPlay,
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/auth.store';
 import { api } from '../../lib/api';
+import { studioSession } from '../../lib/browserStudioSession';
 
 const navItems = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
@@ -27,6 +29,9 @@ export function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
+  const [sessionState, setSessionState] = useState(() => studioSession.getState());
+  useEffect(() => studioSession.subscribe(setSessionState), []);
+  const hasLiveSession = sessionState.status === 'live' && !!sessionState.streamId;
 
   const handleLogout = async () => {
     try { await api.post('/auth/logout'); } catch {}
@@ -148,6 +153,32 @@ export function Sidebar() {
           </NavLink>
         ))}
       </nav>
+
+      {/* Return to Studio — visible when a live session is active */}
+      {hasLiveSession && (
+        <div style={{ padding: '0 var(--space-2)', paddingBottom: 'var(--space-2)' }}>
+          <button
+            onClick={() => navigate(`/streams/${sessionState.streamId}/studio`)}
+            title={collapsed ? 'Return to Studio' : undefined}
+            style={{
+              width: '100%',
+              display: 'flex', alignItems: 'center', gap: '8px',
+              justifyContent: collapsed ? 'center' : 'flex-start',
+              padding: collapsed ? '10px 0' : '9px var(--space-3)',
+              borderRadius: 'var(--radius-lg)',
+              background: 'rgba(239,68,68,0.12)',
+              border: '1px solid rgba(239,68,68,0.25)',
+              color: '#EF4444',
+              cursor: 'pointer',
+              fontSize: '13px', fontWeight: 600,
+              animation: 'pulse 2s ease-in-out infinite',
+            }}
+          >
+            <MonitorPlay size={16} style={{ flexShrink: 0 }} />
+            {!collapsed && 'Return to Studio'}
+          </button>
+        </div>
+      )}
 
       {/* User Footer */}
       <div style={{

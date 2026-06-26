@@ -224,6 +224,34 @@ export class StreamsService {
       );
     }
 
+    // If already broadcast_starting with active destinations, only restart the media engine.
+    // Recreating platform broadcasts generates stale broadcast IDs and wastes API quota.
+    if (session.status === 'broadcast_starting') {
+      const existingDests = await this.destRepo.find({ where: { sessionId: streamId }, relations: ['connection'] });
+      const activeDests = existingDests.filter((d) => d.status === 'active' && d.rtmpUrl && d.streamKey);
+      if (activeDests.length > 0) {
+        this.logger.log(`Stream ${streamId} already broadcast_starting — restarting media engine with ${activeDests.length} existing destinations`);
+        const destInfo = activeDests.map((d) => ({
+          platform: d.platform,
+          connectionId: d.connectionId,
+          accessToken: '',
+          rtmpUrl: d.rtmpUrl,
+          streamKey: d.streamKey,
+        }));
+        try {
+          await this.mediaClient.startStream(streamId, {
+            streamKey: session.streamKey,
+            ingestType: session.ingestType,
+            destinations: destInfo,
+          });
+          this.logger.log(`Media engine restarted for stream ${streamId}`);
+        } catch (error) {
+          this.logger.error(`Failed to restart media engine for ${streamId}: ${error}`);
+        }
+        return session;
+      }
+    }
+
     // Get all connected platform connections for this user
     const connections = await this.connectionRepo.find({ where: { userId, connectionStatus: 'connected' } });
 
@@ -723,13 +751,22 @@ export class StreamsService {
     const srsHttpApi = this.configService.get<string>('media.srsHttpApi', 'http://localhost:1985');
     const streamUrl = `webrtc://localhost/live/${session.streamKey}`;
 
-    // Log first codec line so we can confirm H264 is being offered
-    const firstCodecLine = offer.sdp.split('\n').find((l) => l.startsWith('a=rtpmap:'));
-    this.logger.log(`WebRTC offer received for stream ${streamId} — first codec: ${firstCodecLine?.trim() ?? 'none'}`);
+    // Filter SDP to H264-only — SRS 5 rejects VP8/VP9/AV1
+    const filteredSdp = this.filterSdpH264Only(offer.sdp);
+    const firstCodecLine = filteredSdp.split('\n').find((l) => l.startsWith('a=rtpmap:'));
+    this.logger.log(`WebRTC offer for stream ${streamId} — first codec after H264 filter: ${firstCodecLine?.trim() ?? 'none'}`);
+
+    // If the stream is already live or broadcast_starting, refuse the re-negotiate.
+    // Each re-negotiate kicks the existing WebRTC session, breaking the live stream.
+    // The browser should never send a second offer while the stream is active.
+    if (['live', 'broadcast_starting'].includes(session.status)) {
+      throw new BadRequestException(
+        `Stream is already ${session.status}. End the stream before starting a new one.`,
+      );
+    }
 
     // Kick any existing SRS publisher for this stream key before re-negotiating.
-    // SRS returns code 400 if the stream is already being published (e.g. a zombie
-    // session from a previous browser tab or a stuck stream).
+    // SRS returns code 400 if the stream is already being published (zombie session).
     await this.kickSrsPublisher(srsHttpApi, session.streamKey, streamId);
 
     try {
@@ -738,7 +775,7 @@ export class StreamsService {
         {
           api: `${srsHttpApi}/rtc/v1/publish/`,
           clientip: '127.0.0.1',
-          sdp: offer.sdp,
+          sdp: filteredSdp,
           streamurl: streamUrl,
           tid: `xit-${streamId.slice(0, 8)}`,
         },
@@ -770,6 +807,65 @@ export class StreamsService {
       this.logger.error(`WebRTC offer proxy failed: ${msg}`);
       throw new BadRequestException(`Failed to negotiate WebRTC session: ${msg}`);
     }
+  }
+
+  /**
+   * Strip non-H264 video codecs from an SDP offer so SRS (which only accepts H264) can negotiate it.
+   * Leaves audio and all other sections untouched.
+   */
+  private filterSdpH264Only(sdp: string): string {
+    const lines = sdp.split('\r\n').length > 1 ? sdp.split('\r\n') : sdp.split('\n');
+    const crlf = sdp.includes('\r\n');
+
+    // Find all H264 payload type numbers from rtpmap lines
+    const h264PTs = new Set<string>();
+    for (const line of lines) {
+      const m = line.match(/^a=rtpmap:(\d+)\s+H264\//i);
+      if (m) h264PTs.add(m[1]);
+    }
+
+    // If no H264 found, return as-is and let SRS give an error
+    if (h264PTs.size === 0) return sdp;
+
+    // Also keep RTX entries that reference H264 PTs
+    const rtxPTs = new Set<string>();
+    for (const line of lines) {
+      const aptMatch = line.match(/^a=fmtp:(\d+)\s+apt=(\d+)/);
+      if (aptMatch && h264PTs.has(aptMatch[2])) rtxPTs.add(aptMatch[1]);
+    }
+    const keepPTs = new Set([...h264PTs, ...rtxPTs]);
+
+    let inVideoSection = false;
+    const out: string[] = [];
+
+    for (const line of lines) {
+      if (line.startsWith('m=')) {
+        inVideoSection = line.startsWith('m=video');
+        if (inVideoSection) {
+          // Rewrite m= line to only list kept PTs
+          const parts = line.split(' ');
+          // parts: ['m=video', port, proto, pt1, pt2, ...]
+          const header = parts.slice(0, 3).join(' ');
+          const filteredPTs = parts.slice(3).filter((pt) => keepPTs.has(pt));
+          out.push(`${header} ${filteredPTs.join(' ')}`);
+          continue;
+        }
+      }
+
+      if (inVideoSection) {
+        // Drop rtpmap/fmtp/rtcp-fb lines for non-kept PTs
+        const rtpmapMatch = line.match(/^a=rtpmap:(\d+)\s/);
+        if (rtpmapMatch && !keepPTs.has(rtpmapMatch[1])) continue;
+        const fmtpMatch = line.match(/^a=fmtp:(\d+)\s/);
+        if (fmtpMatch && !keepPTs.has(fmtpMatch[1])) continue;
+        const rtcpFbMatch = line.match(/^a=rtcp-fb:(\d+)\s/);
+        if (rtcpFbMatch && !keepPTs.has(rtcpFbMatch[1])) continue;
+      }
+
+      out.push(line);
+    }
+
+    return out.join(crlf ? '\r\n' : '\n');
   }
 
   /**

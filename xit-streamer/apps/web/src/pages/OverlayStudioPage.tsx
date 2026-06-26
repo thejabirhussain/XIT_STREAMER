@@ -230,11 +230,15 @@ function OverlayEditor({
   onUpdate,
   onDelete,
   onClose,
+  onSave,
+  isSaving,
 }: {
   overlay: OverlayData;
   onUpdate: (patch: Partial<OverlayData>) => void;
   onDelete: () => void;
   onClose: () => void;
+  onSave: () => void;
+  isSaving: boolean;
 }) {
   const cfg = overlay.config;
   const set = (key: string, val: unknown) => onUpdate({ config: { ...cfg, [key]: val } });
@@ -436,8 +440,21 @@ function OverlayEditor({
         </div>
       </div>
 
-      {/* Delete */}
-      <div style={{ padding: '12px 16px', borderTop: '1px solid var(--color-border)' }}>
+      {/* Save + Delete */}
+      <div style={{ padding: '12px 16px', borderTop: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <button
+          onClick={onSave}
+          disabled={isSaving}
+          style={{
+            width: '100%', padding: '9px', background: 'var(--color-accent)', color: '#fff',
+            border: 'none', borderRadius: '6px',
+            fontSize: '13px', fontWeight: 600, cursor: isSaving ? 'not-allowed' : 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+            opacity: isSaving ? 0.7 : 1,
+          }}
+        >
+          {isSaving ? 'Saving…' : '✓ Save Changes'}
+        </button>
         <button
           onClick={onDelete}
           style={{
@@ -460,9 +477,13 @@ export function OverlayStudioPage() {
   const qc = useQueryClient();
   const canvasRef = useRef<HTMLDivElement>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [panel, setPanel] = useState<'library' | 'editor' | 'layers'>('library');
+  const [panel, setPanel] = useState<'library' | 'layers'>('library');
   const [pendingUpdate, setPendingUpdate] = useState<OverlayData | null>(null);
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
   const updateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveIndicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Accumulates all patches within a debounce window so the final API call is complete
+  const accumulatedPatchRef = useRef<Partial<OverlayData> | null>(null);
 
   const { data: stream } = useQuery({
     queryKey: ['stream', id],
@@ -490,7 +511,21 @@ export function OverlayStudioPage() {
   const updateMutation = useMutation({
     mutationFn: ({ ovId, patch }: { ovId: string; patch: Record<string, unknown> }) =>
       api.patch(`/streams/${id}/overlays/${ovId}`, patch),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['overlays', id] }),
+    onSuccess: (_, { ovId, patch }) => {
+      // Update cache in-place — no refetch, prevents flickering
+      qc.setQueryData<OverlayData[]>(['overlays', id], (old) => {
+        if (!old) return old;
+        return old.map(o => o.id === ovId ? { ...o, ...(patch as Partial<OverlayData>) } : o);
+      });
+      // Cache is now authoritative for this overlay — clear optimistic state
+      if (pendingOverlayIdRef.current === ovId) {
+        pendingOverlayIdRef.current = null;
+        setPendingUpdate(null);
+      }
+      if (saveIndicatorTimerRef.current) clearTimeout(saveIndicatorTimerRef.current);
+      setSaveState('saved');
+      saveIndicatorTimerRef.current = setTimeout(() => setSaveState('idle'), 2000);
+    },
   });
 
   const deleteMutation = useMutation({
@@ -509,29 +544,64 @@ export function OverlayStudioPage() {
   });
 
   const selectedOverlay = overlays.find(o => o.id === selectedId) ?? null;
+  // Tracks which overlay has a pending optimistic update — survives deselection so
+  // the canvas doesn't snap back to server state while the save is in-flight
+  const pendingOverlayIdRef = useRef<string | null>(null);
 
-  // Debounced update — called on every drag/resize/field change
-  const scheduleUpdate = useCallback((ovId: string, patch: Partial<OverlayData>) => {
+  // Immediately fires any accumulated patch to the API (cancels debounce timer)
+  const flushUpdate = useCallback(() => {
+    if (updateTimerRef.current) { clearTimeout(updateTimerRef.current); updateTimerRef.current = null; }
+    const ovId = pendingOverlayIdRef.current;
+    const patch = accumulatedPatchRef.current;
+    if (!ovId || !patch) return;
+    accumulatedPatchRef.current = null;
+    setSaveState('saving');
+    updateMutation.mutate({ ovId, patch: patch as Record<string, unknown> });
+  }, [updateMutation]);
+
+  // Debounced save — fires accumulated patch to API after 400 ms of silence
+  const scheduleUpdate = useCallback((ovId: string) => {
+    pendingOverlayIdRef.current = ovId;
+    setSaveState('saving');
     if (updateTimerRef.current) clearTimeout(updateTimerRef.current);
     updateTimerRef.current = setTimeout(() => {
+      const patch = accumulatedPatchRef.current;
+      if (!patch) return;
+      accumulatedPatchRef.current = null;
       updateMutation.mutate({ ovId, patch: patch as Record<string, unknown> });
     }, 400);
   }, [updateMutation]);
 
   const handleOverlayUpdate = useCallback((patch: Partial<OverlayData>) => {
     if (!selectedId) return;
-    // Optimistic local state via pending
-    setPendingUpdate(prev => ({ ...(prev ?? selectedOverlay!), ...patch }));
-    scheduleUpdate(selectedId, patch);
+    // Accumulate patch so rapid edits (drag, typing) are coalesced into one API call
+    accumulatedPatchRef.current = {
+      ...(accumulatedPatchRef.current ?? {}),
+      ...patch,
+      // Deep-merge config so independent field edits don't overwrite each other
+      ...(patch.config
+        ? { config: { ...(accumulatedPatchRef.current?.config as Record<string, unknown> ?? {}), ...patch.config } }
+        : {}),
+    };
+    // Optimistic local UI update
+    setPendingUpdate(prev => {
+      const base = prev ?? selectedOverlay;
+      if (!base) return prev;
+      const next = { ...base, ...patch } as OverlayData;
+      if (patch.config && base.config) {
+        next.config = { ...base.config, ...(patch.config as Record<string, unknown>) };
+      }
+      return next;
+    });
+    scheduleUpdate(selectedId);
   }, [selectedId, selectedOverlay, scheduleUpdate]);
 
-  // Merge server overlays with any pending local update
+  // Merge server overlays with any pending local update.
+  // Uses pendingOverlayIdRef (not selectedId) so optimistic state persists after deselect
+  // until the in-flight save lands and setQueryData updates the cache.
   const displayOverlays = overlays.map(o =>
-    (pendingUpdate && o.id === selectedId) ? { ...o, ...pendingUpdate } : o
+    (pendingUpdate && o.id === pendingOverlayIdRef.current) ? { ...o, ...pendingUpdate } : o
   );
-
-  // Clear pending when query refetches
-  useEffect(() => { setPendingUpdate(null); }, [overlays]);
 
   const handleAddTemplate = (tmpl: OverlayTemplate) => {
     createMutation.mutate({
@@ -578,6 +648,12 @@ export function OverlayStudioPage() {
           <span style={{ fontSize: '12px', color: 'var(--color-text-muted)' }}>— {streamData.title as string}</span>
         )}
         <div style={{ flex: 1 }} />
+        {/* Save indicator */}
+        {saveState !== 'idle' && (
+          <span style={{ fontSize: '12px', color: saveState === 'saved' ? '#22C55E' : 'var(--color-text-muted)' }}>
+            {saveState === 'saving' ? 'Saving…' : '✓ Saved'}
+          </span>
+        )}
         {/* OBS Browser Source URL */}
         <button
           onClick={() => { navigator.clipboard.writeText(rendererUrl); toast.success('Renderer URL copied — paste into OBS Browser Source'); }}
@@ -658,7 +734,7 @@ export function OverlayStudioPage() {
                     return (
                       <div
                         key={o.id}
-                        onClick={() => { setSelectedId(o.id); setPanel('library'); }}
+                        onClick={() => setSelectedId(o.id)}
                         style={{
                           display: 'flex', alignItems: 'center', gap: '8px',
                           padding: '8px 10px',
@@ -690,7 +766,7 @@ export function OverlayStudioPage() {
             {/* Canvas background */}
             <div
               ref={canvasRef}
-              onClick={() => setSelectedId(null)}
+              onClick={() => { flushUpdate(); setSelectedId(null); }}
               style={{
                 width: '100%', height: '100%',
                 background: 'linear-gradient(135deg, #111118 0%, #1C1C28 100%)',
@@ -725,7 +801,7 @@ export function OverlayStudioPage() {
                   key={o.id}
                   overlay={o}
                   isSelected={selectedId === o.id}
-                  onSelect={() => { setSelectedId(o.id); setPendingUpdate(null); }}
+                  onSelect={() => { flushUpdate(); setSelectedId(o.id); setPendingUpdate(null); accumulatedPatchRef.current = null; }}
                   canvasRef={canvasRef}
                   onMove={(x, y) => handleOverlayUpdate({ x, y })}
                   onResize={(width, height) => handleOverlayUpdate({ width, height })}
@@ -747,7 +823,9 @@ export function OverlayStudioPage() {
               overlay={pendingUpdate ? { ...selectedOverlay, ...pendingUpdate } : selectedOverlay}
               onUpdate={handleOverlayUpdate}
               onDelete={() => deleteMutation.mutate(selectedOverlay.id)}
-              onClose={() => { setSelectedId(null); setPendingUpdate(null); }}
+              onSave={flushUpdate}
+              isSaving={updateMutation.isPending}
+              onClose={() => { flushUpdate(); setSelectedId(null); setPendingUpdate(null); accumulatedPatchRef.current = null; }}
             />
           ) : (
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, padding: 24, color: 'var(--color-text-muted)' }}>
