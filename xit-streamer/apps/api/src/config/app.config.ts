@@ -23,9 +23,9 @@ export default () => ({
 
   // Aliased as 'google' namespace (used by app.module config lookup)
   google: {
-    clientId: process.env.GOOGLE_CLIENT_ID || '',
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
-    callbackUrl: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:4000/api/auth/callback/youtube',
+    clientId: process.env.YOUTUBE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID || '',
+    clientSecret: process.env.YOUTUBE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET || '',
+    callbackUrl: process.env.YOUTUBE_REDIRECT_URI || process.env.GOOGLE_CALLBACK_URL || 'http://localhost:4000/api/auth/callback/youtube',
     scopes: [
       'https://www.googleapis.com/auth/youtube.readonly',
       'https://www.googleapis.com/auth/youtube.force-ssl',
@@ -36,17 +36,17 @@ export default () => ({
 
   // Aliased as 'youtube' namespace (used by auth.service.ts)
   youtube: {
-    clientId: process.env.GOOGLE_CLIENT_ID || '',
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
-    redirectUri: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:4000/api/auth/callback/youtube',
+    clientId: process.env.YOUTUBE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID || '',
+    clientSecret: process.env.YOUTUBE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET || '',
+    redirectUri: process.env.YOUTUBE_REDIRECT_URI || process.env.GOOGLE_CALLBACK_URL || 'http://localhost:4000/api/auth/callback/youtube',
   },
 
   // 'meta' namespace
   meta: {
     appId: process.env.META_APP_ID || '',
     appSecret: process.env.META_APP_SECRET || '',
-    callbackUrl: process.env.META_CALLBACK_URL || 'http://localhost:4000/api/auth/callback/meta',
-    redirectUri: process.env.META_CALLBACK_URL || 'http://localhost:4000/api/auth/callback/meta',
+    callbackUrl: process.env.META_REDIRECT_URI || process.env.META_CALLBACK_URL || 'http://localhost:4000/api/auth/callback/meta',
+    redirectUri: process.env.META_REDIRECT_URI || process.env.META_CALLBACK_URL || 'http://localhost:4000/api/auth/callback/meta',
     webhookVerifyToken: process.env.META_WEBHOOK_VERIFY_TOKEN || '',
     webhookSecret: process.env.META_WEBHOOK_SECRET || '',
     scopes: [
