@@ -227,4 +227,19 @@ export class YouTubeApiService {
       return null;
     }
   }
+
+  async sendLiveChatMessage(liveChatId: string, message: string, accessToken: string): Promise<boolean> {
+    try {
+      await axios.post(
+        'https://www.googleapis.com/youtube/v3/liveChat/messages',
+        { snippet: { liveChatId, type: 'textMessageEvent', textMessageDetails: { messageText: message } } },
+        { params: { part: 'snippet' }, headers: { Authorization: `Bearer ${accessToken}` }, timeout: 10000 },
+      );
+      return true;
+    } catch (error) {
+      const msg = axios.isAxiosError(error) ? JSON.stringify(error.response?.data) : String(error);
+      this.logger.warn(`YouTube sendLiveChatMessage failed: ${msg}`);
+      return false;
+    }
+  }
 }

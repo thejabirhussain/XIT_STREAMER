@@ -810,6 +810,55 @@ export class StreamsService {
   }
 
   /**
+   * Send a streamer message to one or more platforms.
+   * Posts to YouTube live chat and/or Facebook live video comments.
+   * Instagram Live does not expose a public streamer comment API.
+   */
+  async sendStreamerMessage(
+    streamId: string,
+    userId: string,
+    message: string,
+    platforms: string[],
+  ): Promise<{ results: Record<string, 'sent' | 'failed' | 'unsupported'> }> {
+    const session = await this.sessionRepo.findOne({ where: { id: streamId, userId } });
+    if (!session) throw new NotFoundException('Stream not found');
+
+    const results: Record<string, 'sent' | 'failed' | 'unsupported'> = {};
+
+    const destinations = await this.destRepo.find({
+      where: { sessionId: streamId },
+      relations: ['connection'],
+    });
+
+    for (const platform of platforms) {
+      const dest = destinations.find((d) => d.platform === platform);
+
+      if (platform === 'youtube') {
+        const liveChatId = session.youtubeLiveChatId;
+        if (!liveChatId || !dest?.connection) { results.youtube = 'failed'; continue; }
+        const token = await this.cryptoService.decrypt(dest.connection.encryptedAccessToken);
+        const ok = await this.youTubeApiService.sendLiveChatMessage(liveChatId, message, token);
+        results.youtube = ok ? 'sent' : 'failed';
+
+      } else if (platform === 'facebook') {
+        const liveVideoId = session.facebookLiveId;
+        if (!liveVideoId || !dest?.connection) { results.facebook = 'failed'; continue; }
+        const token = await this.cryptoService.decrypt(dest.connection.encryptedAccessToken);
+        const ok = await this.facebookApiService.sendLiveComment(liveVideoId, message, token);
+        results.facebook = ok ? 'sent' : 'failed';
+
+      } else if (platform === 'instagram') {
+        // Instagram Live does not provide a public API for streamers to post comments
+        results.instagram = 'unsupported';
+      } else {
+        results[platform] = 'unsupported';
+      }
+    }
+
+    return { results };
+  }
+
+  /**
    * Strip non-H264 video codecs from an SDP offer so SRS (which only accepts H264) can negotiate it.
    * Leaves audio and all other sections untouched.
    */

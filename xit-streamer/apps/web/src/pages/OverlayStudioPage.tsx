@@ -761,9 +761,9 @@ export function OverlayStudioPage() {
         </div>
 
         {/* Center — Canvas */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#0a0a0f', padding: 24, overflow: 'hidden' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'var(--color-bg)', padding: 24, overflow: 'hidden' }}>
           <div style={{ width: '100%', maxWidth: 960, aspectRatio: '16/9', position: 'relative' }}>
-            {/* Canvas background */}
+            {/* Canvas background — always dark to simulate stream viewport */}
             <div
               ref={canvasRef}
               onClick={() => { flushUpdate(); setSelectedId(null); }}
@@ -774,7 +774,7 @@ export function OverlayStudioPage() {
                 border: '1px solid var(--color-border)',
                 position: 'relative',
                 overflow: 'hidden',
-                boxShadow: '0 24px 64px rgba(0,0,0,0.8)',
+                boxShadow: 'var(--shadow-modal)',
                 cursor: 'default',
               }}
             >
@@ -787,7 +787,7 @@ export function OverlayStudioPage() {
                 <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'rgba(108,99,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <Layers size={22} color="rgba(108,99,255,0.5)" />
                 </div>
-                <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.2)' }}>Stream Canvas — drag overlays to position</span>
+                <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.25)' }}>Stream Canvas — drag overlays to position</span>
               </div>
 
               {/* Render overlays */}
@@ -810,7 +810,7 @@ export function OverlayStudioPage() {
             </div>
 
             {/* Canvas size label */}
-            <div style={{ marginTop: 8, fontSize: '11px', color: 'rgba(255,255,255,0.25)', textAlign: 'center' }}>
+            <div style={{ marginTop: 8, fontSize: '11px', color: 'var(--color-text-subtle)', textAlign: 'center' }}>
               16:9 canvas • positions in % • overlays visible on all platforms
             </div>
           </div>

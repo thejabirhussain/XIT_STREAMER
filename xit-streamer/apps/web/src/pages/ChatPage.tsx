@@ -1,10 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { getSocket, joinStreamRoom, leaveStreamRoom } from '../lib/socket';
 import { useStreamStore } from '../stores/stream.store';
-import { Badge } from '../components/ui/Badge';
-import { Search, MessageSquare, Pin, Star, Layers, Sparkles } from 'lucide-react';
+import { Search, MessageSquare, Pin, Star, Layers, Sparkles, Send } from 'lucide-react';
 import { toast } from '../components/ui/Toast';
 
 const PLATFORM_COLORS: Record<string, string> = {
@@ -33,6 +32,8 @@ interface ChatMessage {
   featured?: boolean;
 }
 
+const PLATFORM_LABELS: Record<string, string> = { youtube: 'YouTube', facebook: 'Facebook', instagram: 'Instagram' };
+
 export function ChatPage() {
   const { chatMessages, addChatMessage, chatFilter, setChatFilter, setActiveSession, setChatMessages } = useStreamStore();
   const chatRef = useRef<HTMLDivElement>(null);
@@ -40,10 +41,12 @@ export function ChatPage() {
   const [search, setSearch] = useState('');
   const [autoScroll, setAutoScroll] = useState(true);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
-  // Local moderation state (updates via socket)
   const [moderationState, setModerationState] = useState<Record<string, { pinned?: boolean; highlighted?: boolean; featured?: boolean }>>({});
 
-  const qc = useQueryClient();
+  // Composer state
+  const [composeText, setComposeText] = useState('');
+  const [selectedPlatforms, setSelectedPlatforms] = useState<Set<string>>(new Set(['youtube', 'facebook', 'instagram']));
+  const composeRef = useRef<HTMLTextAreaElement>(null);
 
   const { data: streamsData } = useQuery({
     queryKey: ['streams', 'live'],
@@ -128,6 +131,37 @@ export function ChatPage() {
 
   const handleModerate = (messageId: string, action: string) => {
     moderateMutation.mutate({ messageId, action });
+  };
+
+  const sendMutation = useMutation({
+    mutationFn: ({ message, platforms }: { message: string; platforms: string[] }) =>
+      api.post(`/streams/${selectedSessionId}/chat/send`, { message, platforms }) as unknown as Promise<{ data: { results: Record<string, string> } }>,
+    onSuccess: (res) => {
+      const results = (res as unknown as { data?: { results: Record<string, string> } })?.data?.results ?? {};
+      const sent = Object.entries(results).filter(([, v]) => v === 'sent').map(([k]) => PLATFORM_LABELS[k] ?? k);
+      const failed = Object.entries(results).filter(([, v]) => v === 'failed').map(([k]) => PLATFORM_LABELS[k] ?? k);
+      const unsupported = Object.entries(results).filter(([, v]) => v === 'unsupported').map(([k]) => PLATFORM_LABELS[k] ?? k);
+      if (sent.length) toast.success(`Sent to ${sent.join(', ')}`);
+      if (failed.length) toast.error(`Failed: ${failed.join(', ')}`);
+      if (unsupported.length) toast.info?.(`${unsupported.join(', ')}: not supported`);
+      setComposeText('');
+    },
+    onError: () => toast.error('Failed to send message'),
+  });
+
+  const handleSend = () => {
+    const text = composeText.trim();
+    if (!text || !selectedSessionId || selectedPlatforms.size === 0) return;
+    sendMutation.mutate({ message: text, platforms: [...selectedPlatforms] });
+  };
+
+  const togglePlatform = (p: string) => {
+    setSelectedPlatforms(prev => {
+      const next = new Set(prev);
+      if (next.has(p)) { if (next.size > 1) next.delete(p); } // keep at least one
+      else next.add(p);
+      return next;
+    });
   };
 
   const filtered = chatMessages.filter((m) => {
@@ -373,25 +407,94 @@ export function ChatPage() {
         }
       </div>
 
-      {/* Auto-scroll toggle */}
+      {/* Auto-scroll nudge */}
       {!autoScroll && filtered.length > 0 && (
-        <div style={{
-          position: 'sticky', bottom: 0,
-          padding: 'var(--space-3) var(--space-5)',
-          textAlign: 'center',
-          borderTop: '1px solid var(--color-border)',
-          background: 'var(--color-surface)',
-        }}>
+        <div style={{ textAlign: 'center', padding: '6px', background: 'var(--color-surface)', borderTop: '1px solid var(--color-border)' }}>
           <button
             onClick={() => { setAutoScroll(true); chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight, behavior: 'smooth' }); }}
             style={{
               background: 'var(--color-accent-bg)', border: '1px solid rgba(108,99,255,0.3)',
               color: 'var(--color-accent)', borderRadius: 'var(--radius-full)',
-              padding: '6px 16px', cursor: 'pointer', fontSize: '13px',
+              padding: '4px 14px', cursor: 'pointer', fontSize: '12px',
             }}
-          >
-            ↓ Jump to latest
-          </button>
+          >↓ Jump to latest</button>
+        </div>
+      )}
+
+      {/* Message Composer */}
+      {selectedSessionId && (
+        <div style={{
+          flexShrink: 0, borderTop: '1px solid var(--color-border)',
+          background: 'var(--color-surface)', padding: 'var(--space-3) var(--space-4)',
+          display: 'flex', flexDirection: 'column', gap: '8px',
+        }}>
+          {/* Platform selector */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontSize: '11px', color: 'var(--color-text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginRight: '2px' }}>Send to:</span>
+            {(['youtube', 'facebook', 'instagram'] as const).map((p) => {
+              const active = selectedPlatforms.has(p);
+              const isInstagram = p === 'instagram';
+              return (
+                <button
+                  key={p}
+                  onClick={() => !isInstagram && togglePlatform(p)}
+                  title={isInstagram ? 'Instagram Live does not support sending comments via API' : undefined}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '5px',
+                    padding: '3px 10px', borderRadius: 'var(--radius-full)',
+                    border: `1px solid ${active && !isInstagram ? PLATFORM_COLORS[p] : 'var(--color-border)'}`,
+                    background: active && !isInstagram ? `${PLATFORM_COLORS[p]}18` : 'transparent',
+                    color: active && !isInstagram ? PLATFORM_COLORS[p] : 'var(--color-text-subtle)',
+                    fontSize: '12px', fontWeight: 500, cursor: isInstagram ? 'not-allowed' : 'pointer',
+                    opacity: isInstagram ? 0.45 : 1,
+                    transition: 'all var(--transition-fast)',
+                  }}
+                >
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: PLATFORM_COLORS[p], flexShrink: 0 }} />
+                  {PLATFORM_LABELS[p]}
+                  {isInstagram && <span style={{ fontSize: '10px', opacity: 0.7 }}>N/A</span>}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Text input + send */}
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
+            <textarea
+              ref={composeRef}
+              value={composeText}
+              onChange={(e) => setComposeText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+              placeholder="Type a message to your viewers… (Enter to send, Shift+Enter for newline)"
+              rows={2}
+              style={{
+                flex: 1, resize: 'none',
+                background: 'var(--color-surface-2)', border: '1px solid var(--color-border)',
+                borderRadius: 'var(--radius-lg)', color: 'var(--color-text)',
+                padding: '8px 12px', fontSize: '13px', fontFamily: 'var(--font-sans)',
+                lineHeight: 1.5, outline: 'none',
+              }}
+              onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--color-accent)'; }}
+              onBlur={(e) => { e.currentTarget.style.borderColor = 'var(--color-border)'; }}
+            />
+            <button
+              onClick={handleSend}
+              disabled={!composeText.trim() || sendMutation.isPending || selectedPlatforms.size === 0}
+              style={{
+                height: '60px', width: '48px', flexShrink: 0,
+                background: composeText.trim() ? 'var(--color-accent)' : 'var(--color-surface-3)',
+                border: 'none', borderRadius: 'var(--radius-lg)',
+                color: composeText.trim() ? '#fff' : 'var(--color-text-subtle)',
+                cursor: composeText.trim() ? 'pointer' : 'default',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                transition: 'all var(--transition-fast)',
+              }}
+            >
+              {sendMutation.isPending
+                ? <span style={{ width: 16, height: 16, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite', display: 'inline-block' }} />
+                : <Send size={16} />}
+            </button>
+          </div>
         </div>
       )}
     </div>

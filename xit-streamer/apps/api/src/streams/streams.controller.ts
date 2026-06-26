@@ -194,4 +194,18 @@ export class StreamsController {
   async getFeaturedMessage(@Param('id', ParseUUIDPipe) id: string) {
     return this.chatService.getFeaturedMessage(id);
   }
+
+  /**
+   * POST /api/streams/:id/chat/send
+   * Streamer sends a message to selected platforms.
+   */
+  @Post(':id/chat/send')
+  @HttpCode(HttpStatus.OK)
+  async sendStreamerMessage(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() body: { message: string; platforms: string[] },
+  ) {
+    return this.streamsService.sendStreamerMessage(id, user.sub, body.message, body.platforms);
+  }
 }

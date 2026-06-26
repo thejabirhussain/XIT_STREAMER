@@ -128,4 +128,19 @@ export class FacebookApiService {
     }
   }
 
+  async sendLiveComment(liveVideoId: string, message: string, pageAccessToken: string): Promise<boolean> {
+    try {
+      await axios.post(
+        `https://graph.facebook.com/v19.0/${liveVideoId}/comments`,
+        { message },
+        { params: { access_token: pageAccessToken }, timeout: 10000 },
+      );
+      return true;
+    } catch (error) {
+      const msg = axios.isAxiosError(error) ? JSON.stringify(error.response?.data) : String(error);
+      this.logger.warn(`Facebook sendLiveComment failed: ${msg}`);
+      return false;
+    }
+  }
+
 }
