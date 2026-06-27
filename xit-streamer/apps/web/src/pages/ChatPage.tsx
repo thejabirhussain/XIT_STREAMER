@@ -50,11 +50,12 @@ export function ChatPage() {
 
   const { data: streamsData } = useQuery({
     queryKey: ['streams', 'live'],
-    queryFn: () => api.get('/streams?status=live') as unknown as Promise<{ data: { data: { id: string; title: string }[] } }>,
+    queryFn: () => api.get('/streams') as unknown as Promise<{ data: { data: { id: string; title: string; status: string }[] } }>,
     refetchInterval: 15000,
   });
 
-  const liveStreams = (streamsData as unknown as { data?: { id: string; title: string }[] })?.data || [];
+  const liveStreams = ((streamsData as unknown as { data?: { id: string; title: string; status: string }[] })?.data || [])
+    .filter(s => ['live', 'starting', 'broadcast_starting'].includes(s.status));
 
   useEffect(() => {
     if (liveStreams.length > 0 && !selectedSessionId) {
